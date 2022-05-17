@@ -131,9 +131,60 @@ classdef tire_curve_sysID_helper_class
            %TODO
        end
        
-       
-       function get_tire_curve_coefficients(obj)
-           
+       function [fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef] = get_tire_curve_coefficients(obj)
+            % Original function header: function get_tire_curve_coefficients(obj)
+
+
+            vdot = [];
+            for k=1:1:1099
+                newvdot = (obj.vehicle_states.v(k+1)-obj.vehicle_states.v(k))/dt;
+                vdot = [vdot newvdot];
+            end
+            rdot = [];
+            for k=1:1:1099
+                newrdot = (obj.vehicle_states.r(k+1)-obj.vehicle_states.r(k))/dt;
+                rdot = [rdot newrdot];
+            end
+            % Adjust size of other vectors
+            F_xr = F_xr_list(1:end-1);
+            F_xfw = F_xfw_lisobj.vehicle_states.t(1:end-1);
+            x = obj.vehicle_states.x(1:end-1);
+            y = obj.vehicle_states.y(1:end-1);
+            h = obj.vehicle_states.h(1:end-1);
+            u = obj.vehicle_states.u(1:end-1);
+            v = obj.vehicle_states.v(1:end-1);
+            r = obj.vehicle_states.r(1:end-1);
+            delta=obj.vehicle_commands.delta_cmd(1:end-1);
+            % Find vf and vr
+            v_f = v+obj.lf.*r;
+            v_r = v-obj.lr.*r;
+            % Rotate to wheel frame
+            u_wf = u.*cos(-delta)-v_f.*sin(-delta);
+            v_wf = u.*sin(-delta)+v_f.*cos(-delta);
+            u_wr = u;
+            v_wr = v_r;
+            % Find slip angles and lateral forces
+            alphaf = atan(v_wf./sqrt((u_wf).^2 +0.05));
+            alphar = atan(v_wr./sqrt((u_wr).^2 +0.05));
+            F_ywf=(obj.lr.*obj.m.*(vdot+u.*r)+rdot*obj.Izz-(obj.lf+obj.lr)*sin(delta).*F_xfw)./((obj.lf+obj.lr).*cos(delta));
+            F_yr=(obj.m*(vdot+u.*r)-rdot*obj.Izz/obj.lf)./(1+obj.lr/obj.lf);
+            % Sort the data
+            [alphafSorted, If] = sort(alphaf);
+            F_ywfSorted = F_ywf(If);
+            [alpharSorted, Ir] = sort(alphar);
+            F_yrSorted = F_yr(Ir);
+            % Select and fit a curve to the data in the linear region 
+            alphafSelected = alphafSorted(abs(alphafSorted)<0.1);
+            F_ywfSelected = F_ywfSorted(abs(alphafSorted)<0.1);
+            fLinearCoef = polyfit(alphafSelected, F_ywfSelected, 1);
+            alpharSelected = alpharSorted(abs(alpharSorted)<0.1);
+            F_yrSelected = F_yrSorted(abs(alpharSorted)<0.1);
+            rLinearCoef = polyfit(alpharSelected, F_yrSelected, 1);
+            % Nonlinear curve for the front, F = C1tanh(C2*alpha), x = [C1 C2 alpha]
+            Nonlinear = @(x,xdata)x(1)*tanh(x(2)*xdata);
+            x0 = [1 1];
+            fNonlinearCoef=lsqcurvefit(Nonlinear, x0, alphaf, F_ywf);
+            rNonlinearCoef=lsqcurvefit(Nonlinear, x0, alphar, F_yr);
        end
        
        
