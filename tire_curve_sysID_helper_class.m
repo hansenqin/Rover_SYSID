@@ -180,11 +180,12 @@ classdef tire_curve_sysID_helper_class
             alpharSelected = alpharSorted(abs(alpharSorted)<0.1);
             F_yrSelected = F_yrSorted(abs(alpharSorted)<0.1);
             rLinearCoef = polyfit(alpharSelected, F_yrSelected, 1);
-            % Nonlinear curve for the front, F = C1tanh(C2*alpha), x = [C1 C2 alpha]
-            Nonlinear = @(x,xdata)x(1)*tanh(x(2)*xdata);
+            % Nonlinear curve using fmincon
             x0 = [1 1];
-            fNonlinearCoef=lsqcurvefit(Nonlinear, x0, alphaf, F_ywf);
-            rNonlinearCoef=lsqcurvefit(Nonlinear, x0, alphar, F_yr);
+            f = @(x) norm(x(1)*tanh(x(2)*alphaf)-F_ywf);
+            fNonlinearCoef = fmincon(f,x0);
+            r = @(x) norm(x(1)*tanh(x(2)*alphar)-F_yr);
+            rNonlinearCoef = fmincon(r,x0);
        end
        
        
