@@ -136,18 +136,18 @@ classdef tire_curve_sysID_helper_class
 
 
             vdot = [];
-            for k=1:1:1099
-                newvdot = (obj.vehicle_states.v(k+1)-obj.vehicle_states.v(k))/dt;
+            for k=1:1:length(obj.vehicle_states.v)-1
+                newvdot = (obj.vehicle_states.v(k+1)-obj.vehicle_states.v(k))/(obj.vehicle_states.time(k+1)-obj.vehicle_states.time(k));
                 vdot = [vdot newvdot];
             end
             rdot = [];
-            for k=1:1:1099
-                newrdot = (obj.vehicle_states.r(k+1)-obj.vehicle_states.r(k))/dt;
+            for k=1:1:length(obj.vehicle_states.r)-1
+                newrdot = (obj.vehicle_states.r(k+1)-obj.vehicle_states.r(k))/(obj.vehicle_states.time(k+1)-obj.vehicle_states.time(k));
                 rdot = [rdot newrdot];
             end
             % Adjust size of other vectors
             F_xr = F_xr_list(1:end-1);
-            F_xfw = F_xfw_lisobj.vehicle_states.t(1:end-1);
+            F_xfw = F_xfw_list(1:end-1);
             x = obj.vehicle_states.x(1:end-1);
             y = obj.vehicle_states.y(1:end-1);
             h = obj.vehicle_states.h(1:end-1);
