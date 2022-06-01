@@ -245,8 +245,23 @@ au_e = lowpass(au_e,pass_band/4,mocap_Fs);
 
 
 %% filtering signals
+auto_flag_filtered = zeros(1, length(auto_flag_));
+counter = 0;
+for i=2:length(auto_flag_)
+    if counter ~= 0
+        auto_flag_filtered(i) = 1;
+        counter  = counter-1;
+    end
+  
+    if counter == 0 && auto_flag_(i-1) == 0 && auto_flag_(i) == 1
+        counter = 140;
+    end
+    
+end
+    
 
-auto_flag_ = logical(auto_flag_);
+
+auto_flag_ = logical(auto_flag_filtered);
 % auto_flag_ = logical(ones(size(auto_flag_)));
 
 %filtering out auto driving portion:
@@ -305,10 +320,11 @@ motor_torque_auto = (motor_voltage_auto.*motor_current_auto-motor_current_auto.^
 % r_auto = slam_r_auto;
 
 
-delta_cmd_auto(1:70) = [];
-delta_cmd_auto = [delta_cmd_auto; zeros(70,1)];
+% delta_cmd_auto(1:70) = [];
+% delta_cmd_auto = [delta_cmd_auto; zeros(70,1)];
 
 delta_cmd_auto = delta_cmd_auto-0.5;
+
 vf = v_est_auto + lf*r_auto;
 vr = v_est_auto - lr*r_auto;
 
@@ -316,18 +332,19 @@ vr = v_est_auto - lr*r_auto;
 uvf = [u_auto'; vf'];
 uvr = [u_auto'; vr']';
 
-uv_wf = reshape((rotmat(-delta_cmd_auto)*uvf(:)),2,[])';
+uv_wf = reshape((rotmat(delta_cmd_auto)*uvf(:)),2,[])';
 
+
+alpha_f = -atan(uv_wf(:,2) ./ sqrt((uv_wf(:,1).^2)+0.05));
+alpha_r = -atan(uvr(:,2) ./ sqrt((uvr(:,1).^2)+0.05));
 
 Fx = 0.4*motor_current_auto' - 6.0897*tanh(10.5921*u_est_auto);
 Fxwf = Fx*0.4;
 Fxwr = Fx*0.6;
 
-alpha_f = atan(uv_wf(:,2) ./ sqrt((uv_wf(:,1).^2)+0.05));
-alpha_r = atan(uvr(:,2) ./ sqrt((uvr(:,1).^2)+0.05));
 
-Fywf_truth = 60*tanh(0.5*alpha_f);
-Fywr_truth = 100*tanh(0.5*alpha_r);
+% Fywf_truth = 60*tanh(0.5*alpha_f);
+% Fywr_truth = 100*tanh(0.5*alpha_r);
 
 % % 
 Fywf = (lr*m*(av_auto+u_auto.*r_auto)+ar_auto*Izz-(lf+lr)*sin(delta_cmd_auto).*Fxwf)./((lf+lr)*cos(delta_cmd_auto));

@@ -1,4 +1,4 @@
-classdef tire_curve_sysID_helper_class
+classdef tire_curve_sysID_helper_class < handle
     %Authors: Hansen Qin, Lena Trang
     %Email: qinh@umich.edu
     %Created: 5/17/2022
@@ -19,9 +19,11 @@ classdef tire_curve_sysID_helper_class
         m
         Izz
         
-        vehicle_states = struct(time, x, y, h, u, v, r, u_dot, v_dot, r_dot)     
-        vehicle_commands = struct(time, delta_cmd, motor_current);
-        desired_states = struct(time, ud, vd, rd);
+        %structs that store signals 
+        vehicle_states = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0)
+        vehicle_delta_command = struct('time', 0, 'delta_cmd', 0);
+        vehicle_motor_current_command = struct('time', 0, 'motor_current', 0);
+        desired_states = struct('time', 0, 'ud', 0, 'vd', 0, 'rd', 0);
         
         %signal stuff
         start_time_offset;
@@ -33,48 +35,42 @@ classdef tire_curve_sysID_helper_class
    methods
        function obj = tire_curve_sysID_helper_class(bag)
         %Constrctor
-            set_standard_time(obj, bag)
-           
+        
             load_vehicle_states_data(obj,bag);
             load_zonotope_data(obj,bag);
+            load_commands(obj,bag)
             load_imu_data(obj,bag);
             load_param_gen_data(obj,bag);
             
-            synchronize_signals_sample_rate()
-            
+            % reference_topic is used as the standard sampling
+            % rate, and all other topics will have their sample rates
+            % synchronized to the standard sampling rate
+            reference_topic = '/state_out/rover_debug_state_out';
+            set_standard_time(obj, bag, reference_topic)
+           
+            structs_to_sync = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states"];
+            synchronize_signals_sample_rate(obj, structs_to_sync);
             
        end
-      
        
-       function obj = set_standard_time(obj, bag)
-           bSel = select(bag,'Topic','/state_out/rover_debug_state_out');
+       
+       function obj = set_standard_time(obj, bag, reference_topic)
+          
+           bSel = select(bag,'Topic',reference_topic);
            msgStructs = readMessages(bSel,'DataFormat','struct');
            obj.standard_time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
        end
        
        
-       function obj = synchronize_signals_sample_rate(obj, varargin)
-        % [z1,z2,...] = synchronizeSignalsSampleRate(tdes,t1,z1,t2,z2,...,interp_type)
-        %
-        % Given some desired sample times and any number of time vectors (1-by-Nt)
-        % and associated trajectories (Nstates-by-Nt), resample the trajectories
-        % linearly at the desired times.
+       function obj = synchronize_signals_sample_rate(obj, structs)
             
-            varargout = cell(1,nargout);
-
-            out_idx = 1 ;
-            for i = 1:length(varargin)
-                field_names = fieldnames(varargin{i});
-                time = varargin{i}.time;
+            for i = 1:length(structs) 
+                field_names = fieldnames(obj.(structs(i)));
+                time = obj.(structs(i)).time;
                 for j = 2:length(field_names)
-                    Z = varargin{i}.field_names{j};
-                    if length(time)==1 && obj.standard_time==time
-                        varargout{out_idx} = Z;
-                    else
-                        varargout{out_idx} = interp1(time(:),Z',obj.standard_time(:),'linear')';
-                    end
-                    out_idx = out_idx + 1 ;
+                    obj.(structs(i)).(field_names{j}) = interp1(time(:),obj.(structs(i)).(field_names{j}),obj.standard_time(:),'linear')';
                 end
+                obj.(structs(i)).time = obj.standard_time(:);
             end
        end
        
@@ -89,13 +85,15 @@ classdef tire_curve_sysID_helper_class
        function obj = load_vehicle_states_data(obj, bag)
             bSel = select(bag,'Topic','/state_out/rover_debug_state_out');
             msgStructs = readMessages(bSel,'DataFormat','struct');
-            time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
+            obj.vehicle_states.time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
             obj.vehicle_states.x = cell2mat(cellfun(@(s)s.X,msgStructs,'uni',0));
             obj.vehicle_states.y = cell2mat(cellfun(@(s)s.Y,msgStructs,'uni',0));
             obj.vehicle_states.h = cell2mat(cellfun(@(s)s.H,msgStructs,'uni',0));
             obj.vehicle_states.u = cell2mat(cellfun(@(s)s.U,msgStructs,'uni',0));
             obj.vehicle_states.v = cell2mat(cellfun(@(s)s.V,msgStructs,'uni',0));
             obj.vehicle_states.r = cell2mat(cellfun(@(s)s.R,msgStructs,'uni',0));
+            
+            obj.desired_states.time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
             obj.desired_states.ud = cell2mat(cellfun(@(s)s.Ud,msgStructs,'uni',0));
             obj.desired_states.vd = cell2mat(cellfun(@(s)s.Vd,msgStructs,'uni',0));
             obj.desired_states.rd = cell2mat(cellfun(@(s)s.Rd,msgStructs,'uni',0));
@@ -104,33 +102,40 @@ classdef tire_curve_sysID_helper_class
        end
        
        
-       function load_commands(obj)
-            bSel_servo = select(bag_file,'Topic','/vesc/sensors/servo_position_command');
-            bSel_motor_current = select(bag_file,'Topic','/vesc/sensors/core');
+       function load_commands(obj,bag)
+            bSel_servo = select(bag,'Topic','/vesc/sensors/servo_position_command');
+            bSel_motor_current = select(bag,'Topic','/vesc/sensors/core');
             msgStructs_servo = readMessages(bSel_servo,'DataFormat','struct');
             msgStructs_motor_current = readMessages(bSel_motor_current,'DataFormat','struct');
             
-            obj.vehicle_commands.time = table2array(bSel_servo.MessageList(:,1))*1e9;
-            obj.vehicle_commands.delta_cmd = cell2mat(cellfun(@(s)s.Data,msgStructs_servo,'uni',0));
-            obj.vehicle_commands.motor_current = cell2mat(cellfun(@(s)s.State.CurrentMotor,msgStructs_motor_current,'uni',0));
+       
+            % A -1 is multiplied witbh delta_cmd due to the set up of the
+            % mechanical steering mechanism that inverts the direction of
+            % the servo with the direction of the wheels.
+            obj.vehicle_delta_command.delta_cmd = -cell2mat(cellfun(@(s)s.Data,msgStructs_servo,'uni',0));
+            obj.vehicle_delta_command.time = table2array(bSel_servo.MessageList(:,1));
+            
+            obj.vehicle_motor_current_command.motor_current = cell2mat(cellfun(@(s)s.State.CurrentMotor,msgStructs_motor_current,'uni',0));
+            obj.vehicle_motor_current_command.time = table2array(bSel_motor_current.MessageList(:,1));
             
        end
        
        
-       function load_param_gen_data(obj)
+       function load_param_gen_data(obj,bag)
            %TODO
        end
        
        
-       function load_zonotope_data(obj)
+       function load_zonotope_data(obj,bag)
            %TODO
        end
        
        
-       function load_imu_data(obj)
+       function load_imu_data(obj,bag)
            %TODO
        end
        
+
        function [fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef] = get_tire_curve_coefficients(obj)
             % Original function header: function get_tire_curve_coefficients(obj)
 
