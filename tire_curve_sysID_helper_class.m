@@ -2,7 +2,7 @@ classdef tire_curve_sysID_helper_class < handle
     %Authors: Hansen Qin, Lena Trang
     %Email: qinh@umich.edu
     %Created: 5/17/2022
-    %Modified: 5/17/2022
+    %Modified: 6/2/2022
     %
     %Purpose: solve for the lateral tire characetristic curve coefficients
     %         given a ros bag with vehicle states and vehicle commands.
@@ -39,16 +39,7 @@ classdef tire_curve_sysID_helper_class < handle
    end
    
    methods
-       function obj = tire_curve_sysID_helper_class(bag, auto_flag_on)
-           
-            % set default auto_flag to "OFF"
-            if ~exist('auto_flag_on', 'var')
-                obj.auto_flag_on = 0;
-            else
-                obj.auto_flag_on = auto_flag_on;
-            end
-            
-            
+       function obj = tire_curve_sysID_helper_class(bag, varargin)
             % set vehicle constants
             obj.pass_band = 50;
             obj.lf = 0.20;
@@ -56,6 +47,14 @@ classdef tire_curve_sysID_helper_class < handle
             obj.m = 4.956;%kg
             obj.Izz = 0.1;
             obj.servo_offset = 0.5;
+            obj.auto_flag_on = 0;
+           
+            % set default auto_flag to "OFF"
+            for i = 1:2:length(varargin) % work for a list of name-value pairs
+                if ischar(varargin{i}) || isstring(varargin{i}) % check if is character
+                    obj.(varargin{i}) = varargin{i+1}; % override or add parameters to structure.
+                end
+            end
             
             
             %Load data
@@ -83,12 +82,13 @@ classdef tire_curve_sysID_helper_class < handle
             
             
             % Auto filter signals 
-            if auto_flag_on
+            if obj.auto_flag_on
                 structs_to_auto_filter = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states"];
                 auto_filter(obj, structs_to_auto_filter)
             end
             
        end
+       
        
        function obj = set_standard_time(obj, bag, reference_topic)
           
