@@ -12,47 +12,83 @@ classdef tire_curve_sysID_helper_class < handle
     
     
    properties
-        imu_Fs
         pass_band
         lf
         lr
         m
         Izz
+        servo_offset
         
-        %structs that store signals 
+        % structs that store signals 
         vehicle_states = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0)
         vehicle_delta_command = struct('time', 0, 'delta_cmd', 0);
         vehicle_motor_current_command = struct('time', 0, 'motor_current', 0);
         desired_states = struct('time', 0, 'ud', 0, 'vd', 0, 'rd', 0);
+        auto_flag_data = struct('time', 0, 'auto_flag', 0);
         
-        %signal stuff
+        
+        % signal stuff
         start_time_offset;
-        auto_flag_data;
         standard_time;  %standard usd to synchronize all signals
+        
+        
+        % auto flags on
+        auto_flag_on
+        
         
    end
    
    methods
-       function obj = tire_curve_sysID_helper_class(bag)
-        %Constrctor
-        
+       function obj = tire_curve_sysID_helper_class(bag, auto_flag_on)
+           
+            % set default auto_flag to "OFF"
+            if ~exist('auto_flag_on', 'var')
+                obj.auto_flag_on = 0;
+            else
+                obj.auto_flag_on = auto_flag_on;
+            end
+            
+            
+            % set vehicle constants
+            obj.pass_band = 50;
+            obj.lf = 0.20;
+            obj.lr = 0.115;
+            obj.m = 4.956;%kg
+            obj.Izz = 0.1;
+            obj.servo_offset = 0.5;
+            
+            
+            %Load data
             load_vehicle_states_data(obj,bag);
             load_zonotope_data(obj,bag);
             load_commands(obj,bag)
             load_imu_data(obj,bag);
             load_param_gen_data(obj,bag);
+            load_auto_flag(obj,bag)
             
+            
+            % Sync signals
             % reference_topic is used as the standard sampling
             % rate, and all other topics will have their sample rates
             % synchronized to the standard sampling rate
             reference_topic = '/state_out/rover_debug_state_out';
             set_standard_time(obj, bag, reference_topic)
-           
-            structs_to_sync = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states"];
+            structs_to_sync = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states", "auto_flag_data"];
             synchronize_signals_sample_rate(obj, structs_to_sync);
+             
+            
+            % Low pass signals
+            structs_to_low_pass = ["vehicle_states"];
+            lowpass_signals(obj, structs_to_low_pass)
+            
+            
+            % Auto filter signals 
+            if auto_flag_on
+                structs_to_auto_filter = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states"];
+                auto_filter(obj, structs_to_auto_filter)
+            end
             
        end
-       
        
        function obj = set_standard_time(obj, bag, reference_topic)
           
@@ -64,7 +100,7 @@ classdef tire_curve_sysID_helper_class < handle
        
        function obj = synchronize_signals_sample_rate(obj, structs)
             
-            for i = 1:length(structs) 
+            for i = 1:length(structs)
                 field_names = fieldnames(obj.(structs(i)));
                 time = obj.(structs(i)).time;
                 for j = 2:length(field_names)
@@ -97,7 +133,17 @@ classdef tire_curve_sysID_helper_class < handle
             obj.desired_states.ud = cell2mat(cellfun(@(s)s.Ud,msgStructs,'uni',0));
             obj.desired_states.vd = cell2mat(cellfun(@(s)s.Vd,msgStructs,'uni',0));
             obj.desired_states.rd = cell2mat(cellfun(@(s)s.Rd,msgStructs,'uni',0));
-            obj.auto_flag_data = cell2mat(cellfun(@(s)s.RunningAuto,msgStructs,'uni',0));
+            
+       end
+       
+       
+       function load_auto_flag(obj,bag)
+            bSel = select(bag,'Topic','/state_out/rover_debug_state_out');
+            msgStructs = readMessages(bSel,'DataFormat','struct');
+            
+            obj.auto_flag_data.auto_flag = double(cell2mat(cellfun(@(s)s.RunningAuto,msgStructs,'uni',0)));
+            obj.auto_flag_data.time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
+            obj.start_time_offset = obj.auto_flag_data.auto_flag(1,1);
             
        end
        
@@ -119,6 +165,18 @@ classdef tire_curve_sysID_helper_class < handle
             obj.vehicle_motor_current_command.time = table2array(bSel_motor_current.MessageList(:,1));
             
        end
+
+       
+       function auto_filter(obj, structs)
+           % Only keeps the data from the automatic trajectory running
+           for i = 1:length(structs) 
+                field_names = fieldnames(obj.(structs(i)));
+                for j = 1:length(field_names)
+                    signal = obj.(structs(i)).(field_names{j});
+                    obj.(structs(i)).(field_names{j}) = signal(logical(obj.auto_flag_data.auto_flag));
+                end
+           end
+       end
        
        
        function load_param_gen_data(obj,bag)
@@ -139,7 +197,6 @@ classdef tire_curve_sysID_helper_class < handle
        function [fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef] = get_tire_curve_coefficients(obj)
             % Original function header: function get_tire_curve_coefficients(obj)
 
-
             vdot = [];
             for k=1:1:length(obj.vehicle_states.v)-1
                 newvdot = (obj.vehicle_states.v(k+1)-obj.vehicle_states.v(k))/(obj.vehicle_states.time(k+1)-obj.vehicle_states.time(k));
@@ -150,16 +207,20 @@ classdef tire_curve_sysID_helper_class < handle
                 newrdot = (obj.vehicle_states.r(k+1)-obj.vehicle_states.r(k))/(obj.vehicle_states.time(k+1)-obj.vehicle_states.time(k));
                 rdot = [rdot newrdot];
             end
+            
             % Adjust size of other vectors
-            F_xr = F_xr_list(1:end-1);
-            F_xfw = F_xfw_list(1:end-1);
+            
+            Fx_est = 0.4*obj.vehicle_motor_current_command.motor_current - 6.0897*tanh(10.5921*obj.vehicle_states.u);
+            F_xr = Fx_est(1:end-1);
+            F_xfw = Fx_est(1:end-1);
+            
             x = obj.vehicle_states.x(1:end-1);
             y = obj.vehicle_states.y(1:end-1);
             h = obj.vehicle_states.h(1:end-1);
             u = obj.vehicle_states.u(1:end-1);
             v = obj.vehicle_states.v(1:end-1);
             r = obj.vehicle_states.r(1:end-1);
-            delta=obj.vehicle_commands.delta_cmd(1:end-1);
+            delta=obj.vehicle_delta_command.delta_cmd(1:end-1)+obj.servo_offset;
             % Find vf and vr
             v_f = v+obj.lf.*r;
             v_r = v-obj.lr.*r;
@@ -169,8 +230,8 @@ classdef tire_curve_sysID_helper_class < handle
             u_wr = u;
             v_wr = v_r;
             % Find slip angles and lateral forces
-            alphaf = atan(v_wf./sqrt((u_wf).^2 +0.05));
-            alphar = atan(v_wr./sqrt((u_wr).^2 +0.05));
+            alphaf = - atan(v_wf./sqrt((u_wf).^2 +0.05));
+            alphar = - atan(v_wr./sqrt((u_wr).^2 +0.05));
             F_ywf=(obj.lr.*obj.m.*(vdot+u.*r)+rdot*obj.Izz-(obj.lf+obj.lr)*sin(delta).*F_xfw)./((obj.lf+obj.lr).*cos(delta));
             F_yr=(obj.m*(vdot+u.*r)-rdot*obj.Izz/obj.lf)./(1+obj.lr/obj.lf);
             % Sort the data
@@ -191,11 +252,20 @@ classdef tire_curve_sysID_helper_class < handle
             fNonlinearCoef = fmincon(f,x0);
             r = @(x) norm(x(1)*tanh(x(2)*alphar)-F_yr);
             rNonlinearCoef = fmincon(r,x0);
+            
+            
        end
        
        
-       function lowpass_signals(obj, cutoff_frequency)
-    
+       function lowpass_signals(obj, structs)
+             % Only keeps the data from the automatic trajectory running
+           for i = 1:length(structs) 
+                field_names = fieldnames(obj.(structs(i)));
+                for j = 1:length(field_names)
+                    obj.(structs(i)).(field_names{j}) = lowpass(obj.(structs(i)).(field_names{j}), 0.1, obj.pass_band);
+                    
+                end
+           end
        end
        
    end
