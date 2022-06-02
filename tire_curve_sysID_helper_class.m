@@ -5,7 +5,7 @@ classdef tire_curve_sysID_helper_class < handle
     %Modified: 6/2/2022
     %
     %Purpose: solve for the lateral tire characetristic curve coefficients
-    %         given a ros bag with vehicle states and vehicle commands.
+    %         given a ros obj.bag with vehicle states and vehicle commands.
     %         The tire characterisitc curve is in the form:
     %         F_lateral = C1*tanh(C2*slip_angle)
     
@@ -18,6 +18,9 @@ classdef tire_curve_sysID_helper_class < handle
         m
         Izz
         servo_offset
+        
+        %rosobj.bag
+        bag
         
         % structs that store signals 
         vehicle_states = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0)
@@ -39,8 +42,10 @@ classdef tire_curve_sysID_helper_class < handle
    end
    
    methods
-       function obj = tire_curve_sysID_helper_class(bag, varargin)
+       function obj = tire_curve_sysID_helper_class(bag_name, varargin)
             % set vehicle constants
+            obj.bag = rosbag(bag_name);
+            
             obj.pass_band = 50;
             obj.lf = 0.20;
             obj.lr = 0.115;
@@ -58,12 +63,12 @@ classdef tire_curve_sysID_helper_class < handle
             
             
             %Load data
-            load_vehicle_states_data(obj,bag);
-            load_zonotope_data(obj,bag);
-            load_commands(obj,bag)
-            load_imu_data(obj,bag);
-            load_param_gen_data(obj,bag);
-            load_auto_flag(obj,bag)
+            load_vehicle_states_data(obj);
+            load_zonotope_data(obj);
+            load_commands(obj)
+            load_imu_data(obj);
+            load_param_gen_data(obj);
+            load_auto_flag(obj)
             
             
             % Sync signals
@@ -71,7 +76,7 @@ classdef tire_curve_sysID_helper_class < handle
             % rate, and all other topics will have their sample rates
             % synchronized to the standard sampling rate
             reference_topic = '/state_out/rover_debug_state_out';
-            set_standard_time(obj, bag, reference_topic)
+            set_standard_time(obj, reference_topic)
             structs_to_sync = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states", "auto_flag_data"];
             synchronize_signals_sample_rate(obj, structs_to_sync);
              
@@ -90,9 +95,9 @@ classdef tire_curve_sysID_helper_class < handle
        end
        
        
-       function obj = set_standard_time(obj, bag, reference_topic)
+       function obj = set_standard_time(obj, reference_topic)
           
-           bSel = select(bag,'Topic',reference_topic);
+           bSel = select(obj.bag,'Topic',reference_topic);
            msgStructs = readMessages(bSel,'DataFormat','struct');
            obj.standard_time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
        end
@@ -117,9 +122,35 @@ classdef tire_curve_sysID_helper_class < handle
            
        end
        
+              
+       function auto_filter(obj, structs)
+           % Only keeps the data from the automatic driving mode instead
+           % of manual driving
+           
+           for i = 1:length(structs) 
+                field_names = fieldnames(obj.(structs(i)));
+                for j = 1:length(field_names)
+                    signal = obj.(structs(i)).(field_names{j});
+                    obj.(structs(i)).(field_names{j}) = signal(logical(obj.auto_flag_data.auto_flag));
+                end
+           end
+       end
        
-       function obj = load_vehicle_states_data(obj, bag)
-            bSel = select(bag,'Topic','/state_out/rover_debug_state_out');
+       
+       function lowpass_signals(obj, structs)
+             % Only keeps the data from the automatic trajectory running
+           for i = 1:length(structs) 
+                field_names = fieldnames(obj.(structs(i)));
+                for j = 1:length(field_names)
+                    obj.(structs(i)).(field_names{j}) = lowpass(obj.(structs(i)).(field_names{j}), 0.1, obj.pass_band);
+                    
+                end
+           end
+       end
+       
+       
+       function obj = load_vehicle_states_data(obj)
+            bSel = select(obj.bag,'Topic','/state_out/rover_debug_state_out');
             msgStructs = readMessages(bSel,'DataFormat','struct');
             obj.vehicle_states.time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
             obj.vehicle_states.x = cell2mat(cellfun(@(s)s.X,msgStructs,'uni',0));
@@ -137,8 +168,8 @@ classdef tire_curve_sysID_helper_class < handle
        end
        
        
-       function load_auto_flag(obj,bag)
-            bSel = select(bag,'Topic','/state_out/rover_debug_state_out');
+       function load_auto_flag(obj)
+            bSel = select(obj.bag,'Topic','/state_out/rover_debug_state_out');
             msgStructs = readMessages(bSel,'DataFormat','struct');
             
             obj.auto_flag_data.auto_flag = double(cell2mat(cellfun(@(s)s.RunningAuto,msgStructs,'uni',0)));
@@ -148,9 +179,9 @@ classdef tire_curve_sysID_helper_class < handle
        end
        
        
-       function load_commands(obj,bag)
-            bSel_servo = select(bag,'Topic','/vesc/sensors/servo_position_command');
-            bSel_motor_current = select(bag,'Topic','/vesc/sensors/core');
+       function load_commands(obj)
+            bSel_servo = select(obj.bag,'Topic','/vesc/sensors/servo_position_command');
+            bSel_motor_current = select(obj.bag,'Topic','/vesc/sensors/core');
             msgStructs_servo = readMessages(bSel_servo,'DataFormat','struct');
             msgStructs_motor_current = readMessages(bSel_motor_current,'DataFormat','struct');
             
@@ -165,31 +196,19 @@ classdef tire_curve_sysID_helper_class < handle
             obj.vehicle_motor_current_command.time = table2array(bSel_motor_current.MessageList(:,1));
             
        end
-
-       
-       function auto_filter(obj, structs)
-           % Only keeps the data from the automatic trajectory running
-           for i = 1:length(structs) 
-                field_names = fieldnames(obj.(structs(i)));
-                for j = 1:length(field_names)
-                    signal = obj.(structs(i)).(field_names{j});
-                    obj.(structs(i)).(field_names{j}) = signal(logical(obj.auto_flag_data.auto_flag));
-                end
-           end
-       end
        
        
-       function load_param_gen_data(obj,bag)
+       function load_param_gen_data(obj)
            %TODO
        end
        
        
-       function load_zonotope_data(obj,bag)
+       function load_zonotope_data(obj)
            %TODO
        end
        
        
-       function load_imu_data(obj,bag)
+       function load_imu_data(obj)
            %TODO
        end
        
@@ -256,17 +275,6 @@ classdef tire_curve_sysID_helper_class < handle
             
        end
        
-       
-       function lowpass_signals(obj, structs)
-             % Only keeps the data from the automatic trajectory running
-           for i = 1:length(structs) 
-                field_names = fieldnames(obj.(structs(i)));
-                for j = 1:length(field_names)
-                    obj.(structs(i)).(field_names{j}) = lowpass(obj.(structs(i)).(field_names{j}), 0.1, obj.pass_band);
-                    
-                end
-           end
-       end
        
    end
 end
