@@ -42,25 +42,29 @@ classdef tire_curve_sysID_helper_class < handle
    end
    
    methods
-       function obj = tire_curve_sysID_helper_class(bag_name, varargin)
-            % set vehicle constants
+       function obj = tire_curve_sysID_helper_class(bag_name, rover_config, varargin)
+            % read bag
             obj.bag = rosbag(bag_name);
             
+            rover_config = read_json(obj, rover_config);
+            
+            % set vehicle constants
             obj.pass_band = 50;
-            obj.lf = 0.20;
-            obj.lr = 0.115;
-            obj.m = 4.956;%kg
-            obj.Izz = 0.1;
-            obj.servo_offset = 0.5;
+            obj.lf = rover_config.lf;
+            obj.lr = rover_config.lr;
+            obj.m = rover_config.m;
+            obj.Izz = rover_config.Izz;
+            obj.servo_offset = rover_config.servo_offset;
+            
+            % set default flags
             obj.auto_flag_on = 0;
            
-            % set default auto_flag to "OFF"
+            % parse optional intputs
             for i = 1:2:length(varargin) % work for a list of name-value pairs
                 if ischar(varargin{i}) || isstring(varargin{i}) % check if is character
                     obj.(varargin{i}) = varargin{i+1}; % override or add parameters to structure.
                 end
             end
-            
             
             %Load data
             load_vehicle_states_data(obj);
@@ -70,7 +74,6 @@ classdef tire_curve_sysID_helper_class < handle
             load_param_gen_data(obj);
             load_auto_flag(obj)
             
-            
             % Sync signals
             % reference_topic is used as the standard sampling
             % rate, and all other topics will have their sample rates
@@ -79,12 +82,10 @@ classdef tire_curve_sysID_helper_class < handle
             set_standard_time(obj, reference_topic)
             structs_to_sync = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states", "auto_flag_data"];
             synchronize_signals_sample_rate(obj, structs_to_sync);
-             
             
             % Low pass signals
             structs_to_low_pass = ["vehicle_states"];
             lowpass_signals(obj, structs_to_low_pass)
-            
             
             % Auto filter signals 
             if obj.auto_flag_on
@@ -92,6 +93,15 @@ classdef tire_curve_sysID_helper_class < handle
                 auto_filter(obj, structs_to_auto_filter)
             end
             
+       end
+       
+       
+       function json = read_json(obj, fname)
+            fid = fopen(fname); 
+            raw = fread(fid,inf); 
+            str = char(raw'); 
+            fclose(fid); 
+            json = jsondecode(str);
        end
        
        
@@ -118,7 +128,6 @@ classdef tire_curve_sysID_helper_class < handle
        
        function synchronize_signals_time(obj)
            %Might not be needed
-           
            
        end
        
@@ -274,7 +283,5 @@ classdef tire_curve_sysID_helper_class < handle
             
             
        end
-       
-       
    end
 end
