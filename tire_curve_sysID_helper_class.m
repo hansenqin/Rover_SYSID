@@ -97,7 +97,7 @@ classdef tire_curve_sysID_helper_class < handle
        
        
        function json = read_json(obj, fname)
-            fid = fopen(fname); 
+            fid = fopen(fname);
             raw = fread(fid,inf); 
             str = char(raw'); 
             fclose(fid); 
@@ -222,7 +222,7 @@ classdef tire_curve_sysID_helper_class < handle
        end
        
 
-       function [fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef] = get_tire_curve_coefficients(obj)
+       function [fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef, alphaf, alphar, F_ywf, F_yr] = get_tire_curve_coefficients(obj)
             % Original function header: function get_tire_curve_coefficients(obj)
 
             vdot = [];
@@ -280,8 +280,32 @@ classdef tire_curve_sysID_helper_class < handle
             fNonlinearCoef = fmincon(f,x0);
             r = @(x) norm(x(1)*tanh(x(2)*alphar)-F_yr);
             rNonlinearCoef = fmincon(r,x0);
+       end
+
+       function plot_tire_curve(obj, fLinearCoef, rLinearCoef, alphaf, alphar, F_ywf, F_yr)
+            % Front tire
+            figure(1);
+            scatter(alphaf, F_ywf);
+            hold on;
+            fLinear = @(t) fLinearCoef(1)*t+fLinearCoef(2);
+            t = -0.1:0.01:0.1;
+            plot(t, fLinear(t), "LineWidth", 2);
+            xlabel("Front Slip Angle");
+            ylabel("Front Lateral Tire Force (N)");
+            title("Fywf="+round(fLinearCoef(1),2)+"*alpha"+round(fLinearCoef(2),3))
+            hold off;
             
-            
+            % Rear tire
+            figure(2);
+            scatter(alphar, F_yr);
+            hold on;
+            rLinear = @(t) rLinearCoef(1)*t+rLinearCoef(2);
+            t = -0.1:0.01:0.1;
+            plot(t, rLinear(t), "LineWidth", 2);
+            xlabel("Rear Slip Angle");
+            ylabel("Rear Lateral Tire Force (N)");
+            title("Fywr="+round(rLinearCoef(1),2)+"*alpha"+round(rLinearCoef(2),3))
+            hold off;
        end
    end
 end
