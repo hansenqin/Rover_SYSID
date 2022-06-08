@@ -1,7 +1,7 @@
 # Purpose
 The purpose of this class is to obtain the lateral tire characteristic curve of a rover. The rover is to perform a various number of maneuvers, while a rosbag records the necessary messages. Here are the basic steps of system identification:
 1. **Frequency synchronization**: Since the signals in different topics are sampled at different time, all the signals must be converted to the same sample rate before we can analyze it.  
-2. **Lowpass**:  Since the signals in different topics are sampled at different time, all the signals must be converted to the same sample rate before we can analyze it.  
+2. **Lowpass**: Getting rid of high frquency noise in the signals so signals can look smoother
 3. **Time alignment**: Messages generated from different machines in a closed net could have some time shift relative to each other, and they need to be corrected to in order to perform analysis. Currently this step is omitted in tis code
 
 # Usage
