@@ -25,7 +25,7 @@ Where this returns both the coefficients for linear model and the nonlinear mode
 
 
 To plot the linear tire model, run the following method:
-
+```
 sys_id.plot_linear_tire_curve(fLinearCoef, rLinearCoef, alphaf, alphar, F_ywf, F_ywr)
-
+```
 Where this generates a plot for the front tire and a plot for the back tire.
