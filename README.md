@@ -19,6 +19,13 @@ The constructor also accepts arbitrary number of optional inputs that can direct
 
 To obtain the tire coefficients, run the following method:
 ```
-[fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef] = sys_id.get_tire_curve_coefficients()
+[fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef, alphaf, alphar, F_ywf, F_ywr] = sys_id.get_tire_curve_coefficients()
 ```
 Where this returns both the coefficients for linear model and the nonlinear model of the tire
+
+
+To plot the linear tire model, run the following method:
+
+sys_id.plot_linear_tire_curve(fLinearCoef, rLinearCoef, alphaf, alphar, F_ywf, F_ywr)
+
+Where this generates a plot for the front tire and a plot for the back tire.
