@@ -222,7 +222,7 @@ classdef tire_curve_sysID_helper_class < handle
        end
        
 
-       function [fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef, alphaf, alphar, F_ywf, F_yr] = get_tire_curve_coefficients(obj)
+       function [fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef, alphaf, alphar, F_ywf, F_ywr] = get_tire_curve_coefficients(obj)
             % Original function header: function get_tire_curve_coefficients(obj)
 
             vdot = [];
@@ -261,28 +261,28 @@ classdef tire_curve_sysID_helper_class < handle
             alphaf = - atan(v_wf./sqrt((u_wf).^2 +0.05));
             alphar = - atan(v_wr./sqrt((u_wr).^2 +0.05));
             F_ywf=(obj.lr.*obj.m.*(vdot+u.*r)+rdot*obj.Izz-(obj.lf+obj.lr)*sin(delta).*F_xfw)./((obj.lf+obj.lr).*cos(delta));
-            F_yr=(obj.m*(vdot+u.*r)-rdot*obj.Izz/obj.lf)./(1+obj.lr/obj.lf);
+            F_ywr=(obj.m*(vdot+u.*r)-rdot*obj.Izz/obj.lf)./(1+obj.lr/obj.lf);
             % Sort the data
             [alphafSorted, If] = sort(alphaf);
             F_ywfSorted = F_ywf(If);
             [alpharSorted, Ir] = sort(alphar);
-            F_yrSorted = F_yr(Ir);
+            F_ywrSorted = F_ywr(Ir);
             % Select and fit a curve to the data in the linear region 
             alphafSelected = alphafSorted(abs(alphafSorted)<0.1);
             F_ywfSelected = F_ywfSorted(abs(alphafSorted)<0.1);
             fLinearCoef = polyfit(alphafSelected, F_ywfSelected, 1);
             alpharSelected = alpharSorted(abs(alpharSorted)<0.1);
-            F_yrSelected = F_yrSorted(abs(alpharSorted)<0.1);
-            rLinearCoef = polyfit(alpharSelected, F_yrSelected, 1);
+            F_ywrSelected = F_ywrSorted(abs(alpharSorted)<0.1);
+            rLinearCoef = polyfit(alpharSelected, F_ywrSelected, 1);
             % Nonlinear curve using fmincon
             x0 = [1 1];
             f = @(x) norm(x(1)*tanh(x(2)*alphaf)-F_ywf);
             fNonlinearCoef = fmincon(f,x0);
-            r = @(x) norm(x(1)*tanh(x(2)*alphar)-F_yr);
+            r = @(x) norm(x(1)*tanh(x(2)*alphar)-F_ywr);
             rNonlinearCoef = fmincon(r,x0);
        end
 
-       function plot_tire_curve(obj, fLinearCoef, rLinearCoef, alphaf, alphar, F_ywf, F_yr)
+       function plot_linear_tire_curve(obj, fLinearCoef, rLinearCoef, alphaf, alphar, F_ywf, F_ywr)
             % Front tire
             figure(1);
             scatter(alphaf, F_ywf);
@@ -297,7 +297,7 @@ classdef tire_curve_sysID_helper_class < handle
             
             % Rear tire
             figure(2);
-            scatter(alphar, F_yr);
+            scatter(alphar, F_ywr);
             hold on;
             rLinear = @(t) rLinearCoef(1)*t+rLinearCoef(2);
             t = -0.1:0.01:0.1;
