@@ -268,44 +268,182 @@ classdef tire_curve_sysID_helper_class < handle
             [alpharSorted, Ir] = sort(alphar);
             F_ywrSorted = F_ywr(Ir);
             % Select and fit a curve to the data in the linear region 
-            alphafSelected = alphafSorted(abs(alphafSorted)<0.1);
-            F_ywfSelected = F_ywfSorted(abs(alphafSorted)<0.1);
-            fLinearCoef = polyfit(alphafSelected, F_ywfSelected, 1);
-            alpharSelected = alpharSorted(abs(alpharSorted)<0.1);
-            F_ywrSelected = F_ywrSorted(abs(alpharSorted)<0.1);
-            rLinearCoef = polyfit(alpharSelected, F_ywrSelected, 1);
+            alphafSelected = alphafSorted(abs(alphafSorted)<0.2);
+            F_ywfSelected = F_ywfSorted(abs(alphafSorted)<0.2);
+%             fLinearCoef=polyfit(alphafSelected, F_ywfSelected, 1);
+            alpharSelected = alpharSorted(abs(alpharSorted)<0.2);
+            F_ywrSelected = F_ywrSorted(abs(alpharSorted)<0.2);
+%             rLinearCoef = polyfit(alpharSelected, F_ywrSelected, 1);
+
+            % RANSAC 
+            [fLinearCoef, fLinearCoef_pre]=obj.linear_ransac_fmincon(alphafSelected, F_ywfSelected, 1, .5);
+            [rLinearCoef, rLinearCoef_pre]=obj.linear_ransac_fmincon(alpharSelected, F_ywrSelected, 2, 0.75);
+            
             % Nonlinear curve using fmincon
             x0 = [1 1];
             f = @(x) norm(x(1)*tanh(x(2)*alphaf)-F_ywf);
             fNonlinearCoef = fmincon(f,x0);
             r = @(x) norm(x(1)*tanh(x(2)*alphar)-F_ywr);
             rNonlinearCoef = fmincon(r,x0);
+
+
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%             t = [-0.1:0.01:0.1]
+%             coef = polyfit(alphafSelected, F_ywfSelected, 1)
+%             f = t.*coef(1) + coef(2);
+%             figure(1);
+%             plot(t, f);
+%             hold on;
+%             f = t.*fLinearCoef_pre;
+%             plot(t, f);
+%             legend('poly', 'ransac_pre')
+%             
+%             coef = polyfit(alpharSelected, F_ywrSelected, 1)
+%             f = t.*coef(1) + coef(2);
+%             figure(2);
+%             plot(t, f);
+%             hold on;
+%             f = t.*rLinearCoef_pre;
+%             plot(t, f);
+%             legend('poly', 'ransac_pre')
+       end
+
+       function [linearCoef] = linear_ransac(obj, alpha, F_y, figure_num, max_dist)
+           % Purpose: find coefficients for the linear model using ransac
+           % and polyfit
+           sampleSize = 2;
+           points = [alpha', F_y'];
+            fitLineFcn = @(points) polyfit(points(:,1),points(:,2),1); % fit function using polyfit
+            evalLineFcn = ...   % distance evaluation function
+              @(model, points) sum((points(:, 2) - polyval(model, points(:,1))).^2,2);  
+            [modelRANSAC, inlierIdx] = ransac(points,fitLineFcn,evalLineFcn, ...
+              sampleSize,max_dist);
+            linearCoef = polyfit(points(inlierIdx,1),points(inlierIdx,2),1);
+       end
+
+
+       function [linearCoef, linearCoef_pre] = linear_ransac_fmincon(obj, alpha, F_y, figure_num, max_dist)
+            % Purpose: find coefficients for the linear model using ransac
+            % and fmincon
+            sampleSize = 2;
+            points = [alpha', F_y'];
+            x0 = [1];
+            f = @(x) norm(x(1)*alpha-F_y);
+            linearCoef_pre = fmincon(f, x0);
+            fitLineFcn = @(points) fmincon(f,x0); % fit function using fmincon
+            evalLineFcn = ...   % distance evaluation function
+              @(model, points) sum((points(:, 2) - model*points(:,1)).^2,2);  
+            [modelRANSAC, inlierIdx] = ransac(points,fitLineFcn,evalLineFcn, ...
+              sampleSize,max_dist);
+            f = @(x) norm(x(1)*points(inlierIdx,1)-points(inlierIdx,2));
+            linearCoef = fmincon(f,x0);
        end
 
        function plot_linear_tire_curve(obj, fLinearCoef, rLinearCoef, alphaf, alphar, F_ywf, F_ywr)
+           % Purpose: 
             % Front tire
             figure(1);
             scatter(alphaf, F_ywf);
             hold on;
-            fLinear = @(t) fLinearCoef(1)*t+fLinearCoef(2);
+            fLinear = @(t) fLinearCoef.*t;
             t = -0.1:0.01:0.1;
             plot(t, fLinear(t), "LineWidth", 2);
             xlabel("Front Slip Angle");
             ylabel("Front Lateral Tire Force (N)");
-            title("Fywf="+round(fLinearCoef(1),2)+"*alpha"+round(fLinearCoef(2),3))
+            title("Fywf="+round(fLinearCoef,2)+"*alphaf")
             hold off;
             
             % Rear tire
             figure(2);
             scatter(alphar, F_ywr);
             hold on;
-            rLinear = @(t) rLinearCoef(1)*t+rLinearCoef(2);
+            rLinear = @(t) rLinearCoef*t;
             t = -0.1:0.01:0.1;
             plot(t, rLinear(t), "LineWidth", 2);
             xlabel("Rear Slip Angle");
             ylabel("Rear Lateral Tire Force (N)");
-            title("Fywr="+round(rLinearCoef(1),2)+"*alpha"+round(rLinearCoef(2),3))
+            title("Fywr="+round(rLinearCoef,2)+"*alpha")
             hold off;
+       end
+       
+       function [delta_u] = low_speed_sys_id(obj)
+            % Purpose: find the longitudinal speed state error (u dot)
+            % This is used for data where there are is no turning manuvers,
+            % only speed change manuvers of speeds < 0.5 m/s
+            % Note: consider doing realignment for the time of the
+            % estimated because the effects of the motor current come into 
+            % affect only after some time has elapsed
+
+            % udot = (Fxwf + Fxwr)/m+vr
+            % delta_u = A_predicted - A_SLAM
+            
+            % A_predicted
+            Fx_est = 0.4*obj.vehicle_motor_current_command.motor_current - 6.0897*tanh(10.5921*obj.vehicle_states.u);
+            A_predicted = Fx_est/obj.m;
+            A_predicted(end) = []; % match the data with the actual
+
+            % Adding mvr term
+            v = obj.vehicle_states.v;
+            v(end)=[];
+            r = obj.vehicle_states.r;
+            r(end)=[];
+            vr = v.*r;
+
+            % Actual u dot with mvr term added
+             A_SLAM = diff(obj.vehicle_states.u)./diff(obj.vehicle_states.time') - vr;
+            %%%%%%%%%%%%%%%%%%%%%
+
+            %%%%%%%%%%%%%%%%%%%%%
+%             % Adjusting time alignment
+%             time_align = 5;
+%             u_dot_est(end-time_align+1:end) = [];
+%             u_dot_actual(1:time_align) = [];
+            %%%%%%%%%%%%%%%%%%%%%
+
+            % Difference delta u
+            delta_u = A_predicted - A_SLAM;
+
+            % Plot u dot(t)
+            time = obj.vehicle_states.time;
+            time(end) = [];
+
+            %%%%%%%%%%%%%%%%%%%%%
+%             % Time alignment
+%             time(1:time_align) = [];
+            %%%%%%%%%%%%%%%%%%%%%
+            figure(1);
+            plot(time, A_predicted);
+            hold on;
+            plot(time, A_SLAM);
+            plot(time, delta_u);
+            timeduration = length(time);
+            plot(time, zeros(timeduration))
+
+
+            xlabel("time")
+            ylabel("u dot")
+            legend("estimated", "actual", "error")
+            
+           
+            
+
+
+            hold off;
+       end
+
+       function [u] = test_print(obj)
+           % To see whether or not the rosbag recorded correctly
+           u = obj.vehicle_states.u;
+           time = obj.vehicle_states.time;
+           figure(2);
+           plot(time, u);
+           xlabel('time');
+           ylabel('u')
+           hold off;
+%            v = obj.vehicle_states.v;
+%            hold on;
+%            plot(time, v)
+%         
        end
    end
 end
