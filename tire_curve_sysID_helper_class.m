@@ -369,7 +369,7 @@ classdef tire_curve_sysID_helper_class < handle
             hold off;
        end
        
-       function [delta_u] = low_speed_sys_id(obj)
+       function [time delta_u] = low_speed_sys_id(obj)
             % Purpose: find the longitudinal speed state error (u dot)
             % This is used for data where there are is no turning manuvers,
             % only speed change manuvers of speeds < 0.5 m/s
@@ -403,7 +403,7 @@ classdef tire_curve_sysID_helper_class < handle
             %%%%%%%%%%%%%%%%%%%%% 2022-06-30-15-33-35
             % Choosing time period
             start_time = 0;
-            end_time = 325;            
+            end_time = 309;            
             A_predicted = A_predicted((start_time<time)&(time<end_time));
             A_actual = A_actual((start_time<time)&(time<end_time));
             delta_u = delta_u((start_time<time)&(time<end_time));
@@ -422,16 +422,17 @@ classdef tire_curve_sysID_helper_class < handle
 %             hold on; 
 %             plot(time, A_SLAM);
 %             plot(time, delta_u);
-            scatter(time, A_predicted);
+%             scatter(time, A_predicted);
             hold on; 
-            scatter(time, A_actual);
+%             scatter(time, A_actual);
             scatter(time, delta_u);
 
-            xlim([0 325]);
+            xlim([start_time 325]);
             ylim([-3 3]);
             xlabel("time")
             ylabel("u dot")
-            legend("estimated", "actual", "error")
+%             legend("estimated", "actual", "error")
+%             legend("delta u")
 
             hold off;
        end
@@ -447,7 +448,7 @@ classdef tire_curve_sysID_helper_class < handle
            %%%%%%%%%%%%%%%%%%%%%%%%%%%%
            % Adjustments for 2022-06-30-15-33-35           
            start_time = 0;
-           end_time = 325;
+           end_time = 309;
            u = u((start_time<time)&(time<end_time));
            ud = ud((start_time<time)&(time<end_time));
            time = time((start_time<time)&(time<end_time));
@@ -462,7 +463,7 @@ classdef tire_curve_sysID_helper_class < handle
            plot(time, w);
            xlabel('time');
            ylabel('u')
-           xlim([0 325]); % 2022-06-30-15-33-35
+           xlim([start_time end_time]); % 2022-06-30-15-33-35
            hold off;
 
            % Scatter u wrt to time
@@ -473,7 +474,7 @@ classdef tire_curve_sysID_helper_class < handle
            legend('u','ud');
            xlabel('time');
            ylabel('u')
-           xlim([0 325])
+           xlim([start_time end_time])
        end
        
        function [time, A_predicted, A_actual, delta_u] = remove_trajectory(obj, time, A_predicted, A_actual, delta_u, start_time, end_time)
@@ -483,8 +484,5 @@ classdef tire_curve_sysID_helper_class < handle
             delta_u((time>start_time)&(time<end_time)) = [];
             time((time>start_time)&(time<end_time)) = [];
        end
-
-
-    
    end
 end
