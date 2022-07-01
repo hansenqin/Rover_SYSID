@@ -23,7 +23,7 @@ classdef tire_curve_sysID_helper_class < handle
         bag
         
         % structs that store signals 
-        vehicle_states = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0)
+        vehicle_states = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0, 'w', 0);
         vehicle_delta_command = struct('time', 0, 'delta_cmd', 0);
         vehicle_motor_current_command = struct('time', 0, 'motor_current', 0);
         desired_states = struct('time', 0, 'ud', 0, 'vd', 0, 'rd', 0);
@@ -168,6 +168,9 @@ classdef tire_curve_sysID_helper_class < handle
             obj.vehicle_states.u = cell2mat(cellfun(@(s)s.U,msgStructs,'uni',0));
             obj.vehicle_states.v = cell2mat(cellfun(@(s)s.V,msgStructs,'uni',0));
             obj.vehicle_states.r = cell2mat(cellfun(@(s)s.R,msgStructs,'uni',0));
+
+
+            obj.vehicle_states.w = cell2mat(cellfun(@(s)s.W,msgStructs,'uni',0));
             
             obj.desired_states.time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
             obj.desired_states.ud = cell2mat(cellfun(@(s)s.Ud,msgStructs,'uni',0));
@@ -382,68 +385,106 @@ classdef tire_curve_sysID_helper_class < handle
             A_predicted = Fx_est/obj.m;
             A_predicted(end) = []; % match the data with the actual
 
-            % Adding mvr term
+            % A_actual
             v = obj.vehicle_states.v;
             v(end)=[];
             r = obj.vehicle_states.r;
             r(end)=[];
             vr = v.*r;
-
-            % Actual u dot with mvr term added
-             A_SLAM = diff(obj.vehicle_states.u)./diff(obj.vehicle_states.time') - vr;
-            %%%%%%%%%%%%%%%%%%%%%
-
-            %%%%%%%%%%%%%%%%%%%%%
-%             % Adjusting time alignment
-%             time_align = 5;
-%             u_dot_est(end-time_align+1:end) = [];
-%             u_dot_actual(1:time_align) = [];
-            %%%%%%%%%%%%%%%%%%%%%
+             A_actual = diff(obj.vehicle_states.u)./diff(obj.vehicle_states.time') - vr;
 
             % Difference delta u
-            delta_u = A_predicted - A_SLAM;
+            delta_u = A_predicted - A_actual;
 
+            %%%%%%%%%%%%%%%%%%%%% 2022-06-30-15-33-35
             % Plot u dot(t)
-            time = obj.vehicle_states.time;
+            time = obj.vehicle_states.time-1.6566176*10^9;
             time(end) = [];
+            %%%%%%%%%%%%%%%%%%%%% 2022-06-30-15-33-35
+            % Choosing time period
+            start_time = 0;
+            end_time = 325;            
+            A_predicted = A_predicted((start_time<time)&(time<end_time));
+            A_actual = A_actual((start_time<time)&(time<end_time));
+            delta_u = delta_u((start_time<time)&(time<end_time));
+            time = time((start_time<time)&(time<end_time));
 
+            % Remove trajectories with SLAM issues % trajectory number, speed
+            [time, A_predicted, A_actual, delta_u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, 52, 57); % 2, 2.0
+            [time, A_predicted, A_actual, delta_u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, 145, 150); % 6, 1.7
+            [time, A_predicted, A_actual, delta_u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, 158, 162); % 5, 1.6
+            [time, A_predicted, A_actual, delta_u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, 195, 200); % 10, 1.3
+            [time, A_predicted, A_actual, delta_u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, 230, 234); % 13, 1.0
             %%%%%%%%%%%%%%%%%%%%%
-%             % Time alignment
-%             time(1:time_align) = [];
-            %%%%%%%%%%%%%%%%%%%%%
+
             figure(1);
-            plot(time, A_predicted);
-            hold on;
-            plot(time, A_SLAM);
-            plot(time, delta_u);
-            timeduration = length(time);
-            plot(time, zeros(timeduration))
+%             plot(time, A_predicted);
+%             hold on; 
+%             plot(time, A_SLAM);
+%             plot(time, delta_u);
+            scatter(time, A_predicted);
+            hold on; 
+            scatter(time, A_actual);
+            scatter(time, delta_u);
 
-
+            xlim([0 325]);
+            ylim([-3 3]);
             xlabel("time")
             ylabel("u dot")
             legend("estimated", "actual", "error")
-            
-           
-            
-
 
             hold off;
        end
 
-       function [u] = test_print(obj)
+       function [u, ud, time] = test_print(obj)
            % To see whether or not the rosbag recorded correctly
+
+           % Import data
            u = obj.vehicle_states.u;
-           time = obj.vehicle_states.time;
+           time = obj.vehicle_states.time-1.6566176*10^9;
+           ud = obj.desired_states.ud;
+           w = obj.vehicle_states.w;
+           %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+           % Adjustments for 2022-06-30-15-33-35           
+           start_time = 0;
+           end_time = 325;
+           u = u((start_time<time)&(time<end_time));
+           ud = ud((start_time<time)&(time<end_time));
+           time = time((start_time<time)&(time<end_time));
+           w = w((start_time<time)&(time<end_time));
+           %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+           % Plot u wrt time
            figure(2);
            plot(time, u);
+           hold on;
+           plot(time, ud);
+           plot(time, w);
            xlabel('time');
            ylabel('u')
+           xlim([0 325]); % 2022-06-30-15-33-35
            hold off;
-%            v = obj.vehicle_states.v;
-%            hold on;
-%            plot(time, v)
-%         
+
+           % Scatter u wrt to time
+           figure(3)
+           scatter(time, u);
+           hold on;
+           scatter(time, ud);
+           legend('u','ud');
+           xlabel('time');
+           ylabel('u')
+           xlim([0 325])
        end
+       
+       function [time, A_predicted, A_actual, delta_u] = remove_trajectory(obj, time, A_predicted, A_actual, delta_u, start_time, end_time)
+            % Remove trajectories with SLAM issues
+            A_predicted((time>start_time)&(time<end_time)) = [];
+            A_actual((time>start_time)&(time<end_time)) = [];
+            delta_u((time>start_time)&(time<end_time)) = [];
+            time((time>start_time)&(time<end_time)) = [];
+       end
+
+
+    
    end
 end
