@@ -29,3 +29,9 @@ To plot the linear tire model, run the following method:
 sys_id.plot_linear_tire_curve(fLinearCoef, rLinearCoef, alphaf, alphar, F_ywf, F_ywr)
 ```
 Where this generates a plot for the front tire and a plot for the back tire.
+
+To perform low speed sys ID, run the following method:
+```
+[time delta_u] = sys_id.low_speed_sys_id()
+```
+Where this generates a scatter plot of delta u vs time and a plot of delta u vs u. Note that the trajectories with SLAM issues must be filter manually, and the time interval must be chosen.
