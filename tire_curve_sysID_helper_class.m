@@ -369,7 +369,7 @@ classdef tire_curve_sysID_helper_class < handle
             hold off;
        end
        
-       function [time delta_u] = low_speed_sys_id(obj)
+       function [time, delta_u, u] = low_speed_sys_id(obj)
             % Purpose: find the longitudinal speed state error (u dot)
             % This is used for data where there are is no turning manuvers,
             % only speed change manuvers of speeds < 0.5 m/s
@@ -400,6 +400,9 @@ classdef tire_curve_sysID_helper_class < handle
             % Plot u dot(t)
             time = obj.vehicle_states.time-1.6566176*10^9;
             time(end) = [];
+            u = obj.vehicle_states.u;
+            u(end) = [];
+            % Absolute value of delta_u
             %%%%%%%%%%%%%%%%%%%%% 2022-06-30-15-33-35
             % Choosing time period
             start_time = 0;
@@ -408,33 +411,52 @@ classdef tire_curve_sysID_helper_class < handle
             A_actual = A_actual((start_time<time)&(time<end_time));
             delta_u = delta_u((start_time<time)&(time<end_time));
             time = time((start_time<time)&(time<end_time));
+            u = u((start_time<time)&(time<end_time));
 
             % Remove trajectories with SLAM issues % trajectory number, speed
-            [time, A_predicted, A_actual, delta_u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, 52, 57); % 2, 2.0
-            [time, A_predicted, A_actual, delta_u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, 145, 150); % 6, 1.7
-            [time, A_predicted, A_actual, delta_u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, 158, 162); % 5, 1.6
-            [time, A_predicted, A_actual, delta_u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, 195, 200); % 10, 1.3
-            [time, A_predicted, A_actual, delta_u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, 230, 234); % 13, 1.0
+            [time, A_predicted, A_actual, delta_u, u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, u, 52, 57); % 2, 2.0
+            [time, A_predicted, A_actual, delta_u, u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, u, 145, 150); % 6, 1.7
+            [time, A_predicted, A_actual, delta_u, u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, u, 158, 162); % 5, 1.6
+            [time, A_predicted, A_actual, delta_u, u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, u, 195, 200); % 10, 1.3
+            [time, A_predicted, A_actual, delta_u, u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, u, 230, 234); % 13, 1.0
+
+            % End of trajectories
+%             [time, A_predicted, A_actual, delta_u, u] = obj.remove_trajectory(time, A_predicted, A_actual, delta_u, u, 26.44, 27);
+
+
             %%%%%%%%%%%%%%%%%%%%%
 
             figure(1);
 %             plot(time, A_predicted);
 %             hold on; 
-%             plot(time, A_SLAM);
+%             plot(time, A_actual);
 %             plot(time, delta_u);
-%             scatter(time, A_predicted);
+            scatter(time, A_predicted);
             hold on; 
-%             scatter(time, A_actual);
-            scatter(time, delta_u);
+            scatter(time, A_actual);
+%             scatter(time, delta_u);
+%             scatter(time, u)
 
             xlim([start_time 325]);
             ylim([-3 3]);
             xlabel("time")
-            ylabel("u dot")
-%             legend("estimated", "actual", "error")
+            ylabel("A")
+            legend("predicted", "actual")
 %             legend("delta u")
 
             hold off;
+
+
+            figure(6);
+            
+            scatter(u, abs(delta_u));
+            xlabel('u')
+            ylabel('delta u')
+
+            figure(7)
+            xlabel('A predicted');
+            ylabel('A actual');
+            scatter(A_predicted, A_actual)
        end
 
        function [u, ud, time] = test_print(obj)
@@ -477,12 +499,15 @@ classdef tire_curve_sysID_helper_class < handle
            xlim([start_time end_time])
        end
        
-       function [time, A_predicted, A_actual, delta_u] = remove_trajectory(obj, time, A_predicted, A_actual, delta_u, start_time, end_time)
+       function [time, A_predicted, A_actual, delta_u, u] = remove_trajectory(obj, time, A_predicted, A_actual, delta_u, u, start_time, end_time)
             % Remove trajectories with SLAM issues
-            A_predicted((time>start_time)&(time<end_time)) = [];
-            A_actual((time>start_time)&(time<end_time)) = [];
-            delta_u((time>start_time)&(time<end_time)) = [];
-            time((time>start_time)&(time<end_time)) = [];
+            condition = (time>start_time)&(time<end_time);
+            A_predicted(condition) = [];
+            A_actual(condition) = [];
+            delta_u(condition) = [];
+            u(condition) = [];
+            time(condition) = [];
+            
        end
    end
 end
