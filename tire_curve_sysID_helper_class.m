@@ -464,17 +464,17 @@ classdef tire_curve_sysID_helper_class < handle
 
            % Import data
            u = obj.vehicle_states.u;
-           time = obj.vehicle_states.time-1.6566176*10^9;
+           time = obj.vehicle_states.time-obj.vehicle_states.time(1);
            ud = obj.desired_states.ud;
            w = obj.vehicle_states.w;
            %%%%%%%%%%%%%%%%%%%%%%%%%%%%
            % Adjustments for 2022-06-30-15-33-35           
-           start_time = 0;
-           end_time = 309;
-           u = u((start_time<time)&(time<end_time));
-           ud = ud((start_time<time)&(time<end_time));
-           time = time((start_time<time)&(time<end_time));
-           w = w((start_time<time)&(time<end_time));
+%            start_time = 0;
+%            end_time = 309;
+%            u = u((start_time<time)&(time<end_time));
+%            ud = ud((start_time<time)&(time<end_time));
+%            time = time((start_time<time)&(time<end_time));
+%            w = w((start_time<time)&(time<end_time));
            %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
            % Plot u wrt time
@@ -485,7 +485,7 @@ classdef tire_curve_sysID_helper_class < handle
            plot(time, w);
            xlabel('time');
            ylabel('u')
-           xlim([start_time end_time]); % 2022-06-30-15-33-35
+%            xlim([start_time end_time]); % 2022-06-30-15-33-35
            hold off;
 
            % Scatter u wrt to time
@@ -496,7 +496,7 @@ classdef tire_curve_sysID_helper_class < handle
            legend('u','ud');
            xlabel('time');
            ylabel('u')
-           xlim([start_time end_time])
+%            xlim([start_time end_time])
        end
        
        function [time, A_predicted, A_actual, delta_u, u] = remove_trajectory(obj, time, A_predicted, A_actual, delta_u, u, start_time, end_time)
@@ -507,7 +507,138 @@ classdef tire_curve_sysID_helper_class < handle
             delta_u(condition) = [];
             u(condition) = [];
             time(condition) = [];
-            
        end
+
+       function [P]=bezier(obj)
+           % polynomial fitting for trajectories between ud and u
+
+           % import data
+           u = obj.vehicle_states.u;
+           time = obj.vehicle_states.time-obj.vehicle_states.time(1);
+           ud = obj.desired_states.ud;
+           w = obj.vehicle_states.w;
+
+           
+           %%%%%%%%%%%%%%%%%%%%%%%%%%%% Make this into a separate function?
+%           dir_change         
+           start_time_dir = -10;
+           end_time_dir = 10;
+           u_dir = u((start_time_dir<time)&(time<end_time_dir));
+           ud_dir = ud((start_time_dir<time)&(time<end_time_dir));
+           time_dir = time((start_time_dir<time)&(time<end_time_dir));
+           w_dir = w((start_time_dir<time)&(time<end_time_dir));
+           
+
+           u_dir(1) = [];
+           ud_dir(1) = [];
+           time_dir(1) = [];
+           time_dir = time_dir-time_dir(1);
+           w_dir(1) = [];
+
+%          lan_change
+           start_time_lan = 10;
+           end_time_lan = 25;
+           u_lan = u((start_time_lan<time)&(time<end_time_lan));
+           ud_lan = ud((start_time_lan<time)&(time<end_time_lan));
+           time_lan = time((start_time_lan<time)&(time<end_time_lan));
+           w_lan = w((start_time_lan<time)&(time<end_time_lan));
+
+           
+           u_lan(1) = [];
+           ud_lan(1) = [];
+           time_lan(1) = [];
+           time_lan = time_lan - time_lan(1);
+           w_lan(1) = [];
+
+%          speed change
+           start_time_speed = 25;
+           end_time_speed = 40;
+           u_speed = u((start_time_speed<time)&(time<end_time_speed));
+           ud_speed = ud((start_time_speed<time)&(time<end_time_speed));
+           time_speed = time((start_time_speed<time)&(time<end_time_speed));
+           w_speed = w((start_time_speed<time)&(time<end_time_speed));
+
+           
+           u_speed(1) = [];
+           ud_speed(1) = [];
+           time_speed(1) = [];
+           time_speed = time_speed - time_speed(1);
+           w_speed(1) = [];
+           %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+           % dir: Scatter u wrt time
+           figure(1);
+           scatter(time_dir, u_dir);
+           hold on;
+           scatter(time_dir, ud_dir);
+           xlabel('time');
+           ylabel('u')
+           [t_dir,y_dir,P_dir]=obj.fit_bezier(time_dir, u_dir, ud_dir);
+           plot(t_dir, y_dir(t_dir), 'LineWidth',2)
+           legend('u', 'ud', 'curve')
+           hold off;
+
+           % lan: Scatter u wrt time
+           figure(2);
+           scatter(time_lan, u_lan);
+           hold on;
+           scatter(time_lan, ud_lan);
+           [t_lan,y_lan,P_lan]=obj.fit_bezier(time_lan, u_lan, ud_lan);
+           plot(t_lan, y_lan(t_lan), 'LineWidth',2)
+           legend('u', 'ud', 'curve')
+           xlabel('time');
+           ylabel('u')
+           hold off;
+
+           % speed: Scatter u wrt time
+           figure(3);
+           scatter(time_speed, u_speed);
+           hold on;
+           scatter(time_speed, ud_speed);
+           [t_speed,y_speed,P_speed]=obj.fit_bezier(time_speed, u_speed, ud_speed);
+           plot(t_speed, y_speed(t_speed), 'LineWidth',2)
+           legend('u', 'ud', 'curve')
+           xlabel('time');
+           ylabel('u')
+           hold off;
+       end
+
+       function [t,y,P]=fit_bezier(obj, time, u, ud)
+           ud_0 = ud(1);
+%            ud_dot_0=0; for beginning with slope = 0
+
+           ud_dot_0=(ud(1)-ud(2))/(time(1)-time(2));
+
+           index = -1;
+           dist = 10;
+           for i = 1:1:length(time)
+            if abs(time(i)-1)<dist
+                dist = abs(time(i)-1);
+                index=i;
+            end
+           end
+
+           u_1 = u(index);
+           u_dot_1 = (u(index-1)-u(index+1))/(time(index-1)-time(index+1));
+
+           b = [ud_0; u_1; ud_dot_0; u_dot_1];
+           syms t;
+           A_1 = @(t)[(1-t).^5, 5.*t.*(1-t).^4, 10.*(t.^2).*(1-t).^3, 10.*(t.^3).*(1-t).^2, 5.*(t.^4).*(1-t).^1, t.^5];
+           A_2 = diff(A_1, t);
+           A_2 = matlabFunction(A_2);
+           A = [A_1(0); A_1(1); A_2(0); A_2(1)];
+           
+           x0 = [1, 1, 1, 1, 1, 1];
+           A_points = A_1(time)
+           f = @(x) norm(A_points*[x(1); x(2); x(3); x(4); x(5); x(6)]-u);
+           P=fmincon(f, x0, [], [], A, b);
+
+          
+           t=0:0.01:1;
+           y = sum(sym(A_1).*P);
+           y = matlabFunction(y);
+
+       end
+
    end
 end
