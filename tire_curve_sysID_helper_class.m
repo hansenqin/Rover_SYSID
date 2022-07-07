@@ -580,8 +580,11 @@ classdef tire_curve_sysID_helper_class < handle
            w_speed(1) = [];
            %%%%%%%%%%%%%%%%%%%%%%%%%%%%
            obj.plot_bezier(1, time_dir, u_dir, ud_dir, r_dir, rd_dir);
+           title('Tracking Performance: Direction Change');
            obj.plot_bezier(2, time_lan, u_lan, ud_lan, r_lan, rd_lan);
+           title('Tracking Performance: Lane Change');
            obj.plot_bezier(3, time_speed, u_speed, ud_speed, r_speed, rd_speed);
+           title('Tracking Performance: Speed Change');
        end
 
        function [t,y,P]=fit_bezier(obj, time, u, ud)
@@ -654,18 +657,18 @@ classdef tire_curve_sysID_helper_class < handle
            % Plot the bezier function
            figure(figure_num);
            
-%            yyaxis left
+           yyaxis left
            plot(time, ud, "Color", "magenta", "LineStyle","--", "LineWidth",2);
            hold on;
                       
            [t,y,P]=obj.fit_bezier(time, u, ud);
-           plot(t, y(t), 'LineWidth',2, "Color", "magenta");
+           plot(t, y(t), 'LineWidth',2, "Color", "magenta", 'LineStyle','-');
+           yyaxis right
            plot(time, rd, "Color", '#EDB120', "LineStyle","--", "LineWidth",2);
            t_start = t(end);
            u_start = y(end);
            [t,y,P]=obj.fit_bezier_r(time, r, rd);
-%            yyaxis right
-           plot(t, y(t), 'LineWidth',2, "Color", '#EDB120');
+           plot(t, y(t), 'LineWidth',2, "Color", '#EDB120', 'LineStyle','-');
            r_start = y(end);
 
            u(time<1)=[];
@@ -675,11 +678,20 @@ classdef tire_curve_sysID_helper_class < handle
            u = [u_start u];
            r = [r_start r];
 
-           plot(time, u, 'LineWidth',2, "Color", "magenta");
-           plot(time, r, 'LineWidth',2, "Color", '#EDB120');
-           legend('u^{des}', 'u^{state estimation}', 'r^{des}', 'r^{state estimation}');
+           yyaxis left
+           plot(time, u, 'LineWidth',2, "Color", "magenta", 'LineStyle','-');
+           ylabel('u(m/s)')
+           ylim([-0.5 2.5]);
+           yyaxis right
+           plot(time, r, 'LineWidth',2, "Color", '#EDB120', 'LineStyle','-');
+           ylabel('r(rad/s)')
+           ylim([-1 1])
+           legend('u^{des}', 'u^{state estimation}', '','r^{des}', 'r^{state estimation}', '');
+           ax = gca;
+           ax.YAxis(1).Color = 'magenta';
+           ax.YAxis(2).Color = "#EDB120";
            xlabel('time(s)');
-           ylabel('u(m/s)');
+%            title('Tracking Performance');
            hold off;
        end
    end
