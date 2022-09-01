@@ -287,24 +287,24 @@ classdef tire_curve_sysID_helper_class < handle
             figure(1);
             scatter(alphaf, F_ywf);
             hold on;
-            fLinear = @(t) fLinearCoef(1)*t+fLinearCoef(2);
+            fLinear = @(t) fLinearCoef*t;
             t = -0.1:0.01:0.1;
             plot(t, fLinear(t), "LineWidth", 2);
             xlabel("Front Slip Angle");
             ylabel("Front Lateral Tire Force (N)");
-            title("Fywf="+round(fLinearCoef(1),2)+"*alpha"+round(fLinearCoef(2),3))
+            title("Fywf="+round(fLinearCoef(1),2)+"*alpha")
             hold off;
             
             % Rear tire
             figure(2);
             scatter(alphar, F_ywr);
             hold on;
-            rLinear = @(t) rLinearCoef(1)*t+rLinearCoef(2);
+            rLinear = @(t) rLinearCoef*t;
             t = -0.1:0.01:0.1;
             plot(t, rLinear(t), "LineWidth", 2);
             xlabel("Rear Slip Angle");
             ylabel("Rear Lateral Tire Force (N)");
-            title("Fywr="+round(rLinearCoef(1),2)+"*alpha"+round(rLinearCoef(2),3))
+            title("Fywr="+round(rLinearCoef(1),2)+"*alpha")
             hold off;
        end
    end
