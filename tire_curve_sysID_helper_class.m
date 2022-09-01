@@ -268,11 +268,11 @@ classdef tire_curve_sysID_helper_class < handle
             [alpharSorted, Ir] = sort(alphar);
             F_ywrSorted = F_ywr(Ir);
             % Select and fit a curve to the data in the linear region 
-            alphafSelected = alphafSorted(abs(alphafSorted)<0.1);
-            F_ywfSelected = F_ywfSorted(abs(alphafSorted)<0.1);
+            alphafSelected = alphafSorted(abs(alphafSorted)<0.2);
+            F_ywfSelected = F_ywfSorted(abs(alphafSorted)<0.2);
             fLinearCoef = polyfit(alphafSelected, F_ywfSelected, 1);
-            alpharSelected = alpharSorted(abs(alpharSorted)<0.1);
-            F_ywrSelected = F_ywrSorted(abs(alpharSorted)<0.1);
+            alpharSelected = alpharSorted(abs(alpharSorted)<0.2);
+            F_ywrSelected = F_ywrSorted(abs(alpharSorted)<0.2);
             rLinearCoef = polyfit(alpharSelected, F_ywrSelected, 1);
             % Nonlinear curve using fmincon
             x0 = [1 1];
