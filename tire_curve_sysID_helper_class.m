@@ -222,7 +222,7 @@ classdef tire_curve_sysID_helper_class < handle
        end
        
 
-       function [fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef, alphaf, alphar, F_ywf, F_ywr] = get_tire_curve_coefficients(obj)
+       function [fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef, alphaf, alphar, F_yf, F_yr] = get_tire_curve_coefficients(obj)
             % Original function header: function get_tire_curve_coefficients(obj)
 
             vdot = [];
@@ -236,8 +236,9 @@ classdef tire_curve_sysID_helper_class < handle
                 rdot = [rdot newrdot];
             end
             
-            % Adjust size of other vectors
-            
+            % Calculate the slip ratio
+            % Calculate the longitudinal force
+
             Fx_est = 0.4*obj.vehicle_motor_current_command.motor_current - 6.0897*tanh(10.5921*obj.vehicle_states.u);
             F_xr = Fx_est(1:end-1);
             F_xfw = Fx_est(1:end-1);
@@ -253,39 +254,39 @@ classdef tire_curve_sysID_helper_class < handle
             v_f = v+obj.lf.*r;
             v_r = v-obj.lr.*r;
             % Rotate to wheel frame
-            u_wf = u.*cos(-delta)-v_f.*sin(-delta);
-            v_wf = u.*sin(-delta)+v_f.*cos(-delta);
-            u_wr = u;
-            v_wr = v_r;
+%             u_wf = u.*cos(-delta)-v_f.*sin(-delta);
+%             v_wf = u.*sin(-delta)+v_f.*cos(-delta);
+%             u_wr = u;
+%             v_wr = v_r;
             % Find slip angles and lateral forces
             alphaf = - atan(v_wf./sqrt((u_wf).^2 +0.05));
             alphar = - atan(v_wr./sqrt((u_wr).^2 +0.05));
-            F_ywf=(obj.lr.*obj.m.*(vdot+u.*r)+rdot*obj.Izz-(obj.lf+obj.lr)*sin(delta).*F_xfw)./((obj.lf+obj.lr).*cos(delta));
-            F_ywr=(obj.m*(vdot+u.*r)-rdot*obj.Izz/obj.lf)./(1+obj.lr/obj.lf);
+            F_yf = (obj.lr*obj.m.*(vdot+u.*r)+rdot.*obj.Izz)./(obj.lf + obj.lr);
+            F_yr=(obj.m*(vdot+u.*r)-rdot*obj.Izz/obj.lf)./(1+obj.lr/obj.lf);
             % Sort the data
             [alphafSorted, If] = sort(alphaf);
-            F_ywfSorted = F_ywf(If);
+            F_yfSorted = F_yf(If);
             [alpharSorted, Ir] = sort(alphar);
-            F_ywrSorted = F_ywr(Ir);
+            F_ywrSorted = F_yr(Ir);
             % Select and fit a curve to the data in the linear region 
             alphafSelected = alphafSorted(abs(alphafSorted)<0.2);
-            F_ywfSelected = F_ywfSorted(abs(alphafSorted)<0.2);
-            fLinearCoef = polyfit(alphafSelected, F_ywfSelected, 1);
+            F_yfSelected = F_yfSorted(abs(alphafSorted)<0.2);
+            fLinearCoef = polyfit(alphafSelected, F_yfSelected, 1);
             alpharSelected = alpharSorted(abs(alpharSorted)<0.2);
-            F_ywrSelected = F_ywrSorted(abs(alpharSorted)<0.2);
-            rLinearCoef = polyfit(alpharSelected, F_ywrSelected, 1);
+            F_yrSelected = F_yrSorted(abs(alpharSorted)<0.2);
+            rLinearCoef = polyfit(alpharSelected, F_yrSelected, 1);
             % Nonlinear curve using fmincon
             x0 = [1 1];
-            f = @(x) norm(x(1)*tanh(x(2)*alphaf)-F_ywf);
+            f = @(x) norm(x(1)*tanh(x(2)*alphaf)-F_yf);
             fNonlinearCoef = fmincon(f,x0);
-            r = @(x) norm(x(1)*tanh(x(2)*alphar)-F_ywr);
+            r = @(x) norm(x(1)*tanh(x(2)*alphar)-F_yr);
             rNonlinearCoef = fmincon(r,x0);
        end
 
-       function plot_linear_tire_curve(obj, fLinearCoef, rLinearCoef, alphaf, alphar, F_ywf, F_ywr)
+       function plot_linear_tire_curve(obj, fLinearCoef, rLinearCoef, alphaf, alphar, F_yf, F_yr)
             % Front tire
             figure(1);
-            scatter(alphaf, F_ywf);
+            scatter(alphaf, F_yf);
             hold on;
             fLinear = @(t) fLinearCoef*t;
             t = -0.1:0.01:0.1;
@@ -297,7 +298,7 @@ classdef tire_curve_sysID_helper_class < handle
             
             % Rear tire
             figure(2);
-            scatter(alphar, F_ywr);
+            scatter(alphar, F_yr);
             hold on;
             rLinear = @(t) rLinearCoef*t;
             t = -0.1:0.01:0.1;
