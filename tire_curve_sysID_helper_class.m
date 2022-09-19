@@ -10,7 +10,7 @@ classdef tire_curve_sysID_helper_class < handle
     %         F_lateral = C1*tanh(C2*slip_angle)
     
     
-    
+   
    properties
         pass_band
         lf
@@ -18,12 +18,14 @@ classdef tire_curve_sysID_helper_class < handle
         m
         Izz
         servo_offset
+        rw
+        g
         
         %rosobj.bag
         bag
         
         % structs that store signals 
-        vehicle_states = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0)
+        vehicle_states = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0, 'w', 0);
         vehicle_delta_command = struct('time', 0, 'delta_cmd', 0);
         vehicle_motor_current_command = struct('time', 0, 'motor_current', 0);
         desired_states = struct('time', 0, 'ud', 0, 'vd', 0, 'rd', 0);
@@ -55,6 +57,8 @@ classdef tire_curve_sysID_helper_class < handle
             obj.m = rover_config.m;
             obj.Izz = rover_config.Izz;
             obj.servo_offset = rover_config.servo_offset;
+            obj.rw = rover_config.rw;
+            obj.g = rover_config.g;
             
             % set default flags
             obj.auto_flag_on = 0;
@@ -79,7 +83,7 @@ classdef tire_curve_sysID_helper_class < handle
             % rate, and all other topics will have their sample rates
             % synchronized to the standard sampling rate
             reference_topic = '/state_out/rover_debug_state_out';
-            set_standard_time(obj, reference_topic)
+            set_standard_time(obj, reference_topic);
             structs_to_sync = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states", "auto_flag_data"];
             synchronize_signals_sample_rate(obj, structs_to_sync);
             
@@ -106,7 +110,7 @@ classdef tire_curve_sysID_helper_class < handle
        
        
        function obj = set_standard_time(obj, reference_topic)
-          
+           
            bSel = select(obj.bag,'Topic',reference_topic);
            msgStructs = readMessages(bSel,'DataFormat','struct');
            obj.standard_time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
@@ -114,12 +118,12 @@ classdef tire_curve_sysID_helper_class < handle
        
        
        function obj = synchronize_signals_sample_rate(obj, structs)
-            
+
             for i = 1:length(structs)
                 field_names = fieldnames(obj.(structs(i)));
                 time = obj.(structs(i)).time;
                 for j = 2:length(field_names)
-                    obj.(structs(i)).(field_names{j}) = interp1(time(:),obj.(structs(i)).(field_names{j}),obj.standard_time(:),'linear')';
+                    obj.(structs(i)).(field_names{j}) = interp1(time(:),obj.(structs(i)).(field_names{j}),obj.standard_time(:),'linear','extrap');
                 end
                 obj.(structs(i)).time = obj.standard_time(:);
             end
@@ -168,6 +172,7 @@ classdef tire_curve_sysID_helper_class < handle
             obj.vehicle_states.u = cell2mat(cellfun(@(s)s.U,msgStructs,'uni',0));
             obj.vehicle_states.v = cell2mat(cellfun(@(s)s.V,msgStructs,'uni',0));
             obj.vehicle_states.r = cell2mat(cellfun(@(s)s.R,msgStructs,'uni',0));
+            obj.vehicle_states.w = cell2mat(cellfun(@(s)s.W,msgStructs,'uni',0));
             
             obj.desired_states.time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
             obj.desired_states.ud = cell2mat(cellfun(@(s)s.Ud,msgStructs,'uni',0));
@@ -222,9 +227,14 @@ classdef tire_curve_sysID_helper_class < handle
        end
        
 
-       function [fLinearCoef, rLinearCoef, fNonlinearCoef, rNonlinearCoef, alphaf, alphar, F_yf, F_yr] = get_tire_curve_coefficients(obj)
-            % Original function header: function get_tire_curve_coefficients(obj)
+       function [xLinearCoef, fLinearCoef, rLinearCoef, lambda, alphaf, alphar, F_x, F_yf, F_yr] = get_tire_curve_coefficients(obj)
 
+            % TODO: add curve fitting to this derivative step
+            udot = [];
+            for k=1:1:length(obj.vehicle_states.u)-1
+                newvdot = (obj.vehicle_states.u(k+1)-obj.vehicle_states.u(k))/(obj.vehicle_states.time(k+1)-obj.vehicle_states.time(k));
+                udot = [udot newvdot];
+            end
             vdot = [];
             for k=1:1:length(obj.vehicle_states.v)-1
                 newvdot = (obj.vehicle_states.v(k+1)-obj.vehicle_states.v(k))/(obj.vehicle_states.time(k+1)-obj.vehicle_states.time(k));
@@ -236,76 +246,111 @@ classdef tire_curve_sysID_helper_class < handle
                 rdot = [rdot newrdot];
             end
             
-            % Calculate the slip ratio
-            % Calculate the longitudinal force
+            udot = udot';
+            vdot = vdot';
+            rdot = rdot';
 
-            Fx_est = 0.4*obj.vehicle_motor_current_command.motor_current - 6.0897*tanh(10.5921*obj.vehicle_states.u);
-            F_xr = Fx_est(1:end-1);
-            F_xfw = Fx_est(1:end-1);
-            
             x = obj.vehicle_states.x(1:end-1);
             y = obj.vehicle_states.y(1:end-1);
             h = obj.vehicle_states.h(1:end-1);
             u = obj.vehicle_states.u(1:end-1);
             v = obj.vehicle_states.v(1:end-1);
             r = obj.vehicle_states.r(1:end-1);
+            w = obj.vehicle_states.w(1:end-1);
             delta=obj.vehicle_delta_command.delta_cmd(1:end-1)+obj.servo_offset;
-            % Find vf and vr
-            v_f = v+obj.lf.*r;
-            v_r = v-obj.lr.*r;
-            % Rotate to wheel frame
-%             u_wf = u.*cos(-delta)-v_f.*sin(-delta);
-%             v_wf = u.*sin(-delta)+v_f.*cos(-delta);
-%             u_wr = u;
-%             v_wr = v_r;
-            % Find slip angles and lateral forces
-            alphaf = - atan(v_wf./sqrt((u_wf).^2 +0.05));
-            alphar = - atan(v_wr./sqrt((u_wr).^2 +0.05));
-            F_yf = (obj.lr*obj.m.*(vdot+u.*r)+rdot.*obj.Izz)./(obj.lf + obj.lr);
-            F_yr=(obj.m*(vdot+u.*r)-rdot*obj.Izz/obj.lf)./(1+obj.lr/obj.lf);
+        
+            % Calculate the longitudinal force
+            % Current method
+%             Fx_est = 0.4*obj.vehicle_motor_current_command.motor_current - 6.0897*tanh(10.5921*obj.vehicle_states.u);
+%             F_xr = Fx_est(1:end-1);
+%             F_xfw = Fx_est(1:end-1);
+
+            % Calculate the slip ratio
+            lambda = [];
+            lambda_numerator = obj.rw.*w-u;
+            for i = 1:length(lambda_numerator)
+                if lambda_numerator < 0
+                    lambda = [lambda, lambda_numerator(i)./sqrt(u(i).^2+0.05)];
+                else
+                    lambda = [lambda, lambda_numerator(i)./sqrt((obj.rw.*w(i)).^2+0.05)];
+                end
+            end
+            % Find slip angles
+            alphaf = delta - (v + obj.lf.*r)./sqrt(u.^2+0.05);
+            alphar = -(v-obj.lr.*r)./sqrt(u.^2+0.05);
+            % Find longitudinal force: wheel encoder method
+            F_x = obj.m.*(udot-v.*r);
+            % Find latereal force
+            F_yf = (obj.lr.*obj.m.*(vdot+u.*r)+rdot.*obj.Izz)./(obj.lf + obj.lr);
+            F_yr=(obj.m.*(vdot+u.*r)-rdot*obj.Izz./obj.lf)./(1+obj.lr./obj.lf);
             % Sort the data
             [alphafSorted, If] = sort(alphaf);
             F_yfSorted = F_yf(If);
             [alpharSorted, Ir] = sort(alphar);
-            F_ywrSorted = F_yr(Ir);
+            F_yrSorted = F_yr(Ir);
             % Select and fit a curve to the data in the linear region 
+            lambdaSelected = lambda(abs(lambda)<0.45);
             alphafSelected = alphafSorted(abs(alphafSorted)<0.2);
-            F_yfSelected = F_yfSorted(abs(alphafSorted)<0.2);
-            fLinearCoef = polyfit(alphafSelected, F_yfSelected, 1);
             alpharSelected = alpharSorted(abs(alpharSorted)<0.2);
+            F_xSelected = F_x(abs(lambda)<0.45);
+            F_yfSelected = F_yfSorted(abs(alphafSorted)<0.2);
             F_yrSelected = F_yrSorted(abs(alpharSorted)<0.2);
-            rLinearCoef = polyfit(alpharSelected, F_yrSelected, 1);
+            % Longitudinal linear curve through (0,0) using fmincon
+            x0 = 10;
+            f = @(x) norm(obj.m.*obj.g.*lambdaSelected'.*x-F_xSelected);
+            xLinearCoef = fmincon(f,x0);
+            % Lateral linear curve through (0,0) using fmincon
+            x0 = 1;
+            f = @(x) norm(alphafSelected*x-F_yfSelected);
+            fLinearCoef = fmincon(f,x0);
+            f = @(x) norm(alpharSelected*x-F_yrSelected);
+            rLinearCoef = fmincon(f,x0);
             % Nonlinear curve using fmincon
-            x0 = [1 1];
-            f = @(x) norm(x(1)*tanh(x(2)*alphaf)-F_yf);
-            fNonlinearCoef = fmincon(f,x0);
-            r = @(x) norm(x(1)*tanh(x(2)*alphar)-F_yr);
-            rNonlinearCoef = fmincon(r,x0);
+%             x0 = [1 1];
+%             f = @(x) norm(x(1)*tanh(x(2)*alphaf)-F_yf);
+%             fNonlinearCoef = fmincon(f,x0);
+%             r = @(x) norm(x(1)*tanh(x(2)*alphar)-F_yr);
+%             rNonlinearCoef = fmincon(r,x0);
        end
 
-       function plot_linear_tire_curve(obj, fLinearCoef, rLinearCoef, alphaf, alphar, F_yf, F_yr)
-            % Front tire
+       function plot_linear_tire_curve(obj, xLinearCoef, fLinearCoef, rLinearCoef, lambda, alphaf, alphar, F_x, F_yf, F_yr)
+            % Longitudinal
             figure(1);
+            scatter(lambda, F_x);
+            hold on;
+            xLinear = @(t) xLinearCoef(1)*t;
+            t = -0.2:0.01:0.2;
+            plot(t, xLinear(t), "LineWidth", 2);
+            xlabel("Front Slip Ratio");
+            ylabel("Front Longitudinal Tire Force (N)");
+            title("Fxf+Fxr=mgl_r/l"+round(fLinearCoef(1),2)+"*lambda")
+            xlim([-1,1]);
+            hold off;
+
+            % Front tire lateral
+            figure(2);
             scatter(alphaf, F_yf);
             hold on;
-            fLinear = @(t) fLinearCoef*t;
-            t = -0.1:0.01:0.1;
+            fLinear = @(t) fLinearCoef(1)*t;
+            t = -0.2:0.01:0.2;
             plot(t, fLinear(t), "LineWidth", 2);
             xlabel("Front Slip Angle");
             ylabel("Front Lateral Tire Force (N)");
             title("Fywf="+round(fLinearCoef(1),2)+"*alpha")
+            xlim([-0.3,0.3]);
             hold off;
             
-            % Rear tire
-            figure(2);
+            % Rear tire lateral
+            figure(3);
             scatter(alphar, F_yr);
             hold on;
-            rLinear = @(t) rLinearCoef*t;
-            t = -0.1:0.01:0.1;
+            rLinear = @(t) rLinearCoef(1)*t;
+            t = -0.2:0.01:0.2;
             plot(t, rLinear(t), "LineWidth", 2);
             xlabel("Rear Slip Angle");
             ylabel("Rear Lateral Tire Force (N)");
-            title("Fywr="+round(rLinearCoef(1),2)+"*alpha")
+            title("Fywr="+round(rLinearCoef(1),2)+"*alpha");
+            xlim([-0.3,0.3]);
             hold off;
        end
    end
