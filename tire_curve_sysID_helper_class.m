@@ -25,8 +25,9 @@ classdef tire_curve_sysID_helper_class < handle
         bag
         
         % structs that store signals 
-        vehicle_states = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0, 'w', 0);
-        vehicle_delta_command = struct('time', 0, 'delta_cmd', 0);
+        vehicle_states = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0, 'w', 0, 'delta_cmd', 0);
+%         vehicle_delta_command = struct('time', 0, 'delta_cmd', 0);
+        vehicle_encoder = struct('time', 0, 'encoder_velocity', 0);
         vehicle_motor_current_command = struct('time', 0, 'motor_current', 0);
         desired_states = struct('time', 0, 'ud', 0, 'vd', 0, 'rd', 0);
         auto_flag_data = struct('time', 0, 'auto_flag', 0);
@@ -84,7 +85,8 @@ classdef tire_curve_sysID_helper_class < handle
             % synchronized to the standard sampling rate
             reference_topic = '/state_out/rover_debug_state_out';
             set_standard_time(obj, reference_topic);
-            structs_to_sync = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states", "auto_flag_data"];
+%             structs_to_sync = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states", "auto_flag_data"];
+            structs_to_sync = ["vehicle_states", "vehicle_motor_current_command", "vehicle_encoder","desired_states", "auto_flag_data"];
             synchronize_signals_sample_rate(obj, structs_to_sync);
             
             % Low pass signals
@@ -93,7 +95,8 @@ classdef tire_curve_sysID_helper_class < handle
             
             % Auto filter signals 
             if obj.auto_flag_on
-                structs_to_auto_filter = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states"];
+%                 structs_to_auto_filter = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states"];
+                structs_to_auto_filter = ["vehicle_states", "vehicle_motor_current_command", "vehicle_encoder", "desired_states"];
                 auto_filter(obj, structs_to_auto_filter)
             end
             
@@ -123,7 +126,7 @@ classdef tire_curve_sysID_helper_class < handle
                 field_names = fieldnames(obj.(structs(i)));
                 time = obj.(structs(i)).time;
                 for j = 2:length(field_names)
-                    obj.(structs(i)).(field_names{j}) = interp1(time(:),obj.(structs(i)).(field_names{j}),obj.standard_time(:),'linear','extrap');
+                    obj.(structs(i)).(field_names{j}) = interp1(time(:),obj.(structs(i)).(field_names{j}),obj.standard_time(:),'linear'); % 'extrap'
                 end
                 obj.(structs(i)).time = obj.standard_time(:);
             end
@@ -173,12 +176,19 @@ classdef tire_curve_sysID_helper_class < handle
             obj.vehicle_states.v = cell2mat(cellfun(@(s)s.V,msgStructs,'uni',0));
             obj.vehicle_states.r = cell2mat(cellfun(@(s)s.R,msgStructs,'uni',0));
             obj.vehicle_states.w = cell2mat(cellfun(@(s)s.W,msgStructs,'uni',0));
+
+            obj.vehicle_states.delta_cmd = cell2mat(cellfun(@(s)s.DeltaCmd,msgStructs,'uni',0));
+
             
             obj.desired_states.time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
             obj.desired_states.ud = cell2mat(cellfun(@(s)s.Ud,msgStructs,'uni',0));
             obj.desired_states.vd = cell2mat(cellfun(@(s)s.Vd,msgStructs,'uni',0));
             obj.desired_states.rd = cell2mat(cellfun(@(s)s.Rd,msgStructs,'uni',0));
-            
+
+            bSel = select(obj.bag,'Topic','/joint_states');
+            msgStructs = readMessages(bSel,'DataFormat','struct');
+            obj.vehicle_encoder.time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
+            obj.vehicle_encoder.encoder_velocity = cell2mat(cellfun(@(s)s.Velocity,msgStructs,'uni',0));
        end
        
        
@@ -203,8 +213,8 @@ classdef tire_curve_sysID_helper_class < handle
             % A -1 is multiplied witbh delta_cmd due to the set up of the
             % mechanical steering mechanism that inverts the direction of
             % the servo with the direction of the wheels.
-            obj.vehicle_delta_command.delta_cmd = -cell2mat(cellfun(@(s)s.Data,msgStructs_servo,'uni',0));
-            obj.vehicle_delta_command.time = table2array(bSel_servo.MessageList(:,1));
+% % % % %             obj.vehicle_delta_command.delta_cmd = -cell2mat(cellfun(@(s)s.Data,msgStructs_servo,'uni',0));
+% % % % %             obj.vehicle_delta_command.time = table2array(bSel_servo.MessageList(:,1));
             
             obj.vehicle_motor_current_command.motor_current = cell2mat(cellfun(@(s)s.State.CurrentMotor,msgStructs_motor_current,'uni',0));
             obj.vehicle_motor_current_command.time = table2array(bSel_motor_current.MessageList(:,1));
@@ -245,7 +255,7 @@ classdef tire_curve_sysID_helper_class < handle
                 newrdot = (obj.vehicle_states.r(k+1)-obj.vehicle_states.r(k))/(obj.vehicle_states.time(k+1)-obj.vehicle_states.time(k));
                 rdot = [rdot newrdot];
             end
-            
+
             udot = udot';
             vdot = vdot';
             rdot = rdot';
@@ -256,8 +266,11 @@ classdef tire_curve_sysID_helper_class < handle
             u = obj.vehicle_states.u(1:end-1);
             v = obj.vehicle_states.v(1:end-1);
             r = obj.vehicle_states.r(1:end-1);
+%             w = obj.vehicle_encoder.encoder_velocity(1:end-1);
+%             w = w/(-0.5*pi*10^7);
             w = obj.vehicle_states.w(1:end-1);
-            delta=obj.vehicle_delta_command.delta_cmd(1:end-1)+obj.servo_offset;
+% %             delta=obj.vehicle_delta_command.delta_cmd(1:end-1)+obj.servo_offset;
+            delta=obj.vehicle_states.delta_cmd(1:end-1);
         
             % Calculate the longitudinal force
             % Current method
