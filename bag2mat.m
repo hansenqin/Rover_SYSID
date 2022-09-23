@@ -1,4 +1,4 @@
-bag_name = "velodyne_sys_id_trajectories.bag";
+bag_name = "sys_id_manual_driving_striaght_line_09_22.bag";
 bag_file = rosbag(bag_name);
 num_topics = height(bag_file.AvailableTopics);
 publisher_map = containers.Map;
