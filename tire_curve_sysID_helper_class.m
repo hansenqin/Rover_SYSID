@@ -31,7 +31,7 @@ classdef tire_curve_sysID_helper_class < handle
         vehicle_motor_current_command = struct('time', 0, 'motor_current', 0);
         desired_states = struct('time', 0, 'ud', 0, 'vd', 0, 'rd', 0);
         auto_flag_data = struct('time', 0, 'auto_flag', 0);
-        
+        vehicle_states_from_slam = struct('time', 0, 'x', 0, 'y', 0, 'h', 0);
         
         % signal stuff
         start_time_offset;
@@ -73,6 +73,7 @@ classdef tire_curve_sysID_helper_class < handle
             
             %Load data
             load_vehicle_states_data(obj);
+            load_vehicle_states_from_slam_data(obj);
             load_zonotope_data(obj);
             load_commands(obj)
             load_imu_data(obj);
@@ -191,6 +192,23 @@ classdef tire_curve_sysID_helper_class < handle
             obj.vehicle_encoder.encoder_velocity = cell2mat(cellfun(@(s)s.Velocity,msgStructs,'uni',0));
        end
        
+       function obj = load_vehicle_states_from_slam_data(obj)
+            bSel = select(obj.bag, 'Topic', '/tf');
+            tf = cell2mat(readMessages(bSel, 'DataFormat', 'struct'));
+
+            for i = 1:size(tf)
+                if size(tf(i).Transforms, 2) > 0
+                    if tf(i, 1).Transforms.Header.FrameId == "map" && tf(i, 1).Transforms.ChildFrameId == "velodyne_base_link"
+                        obj.vehicle_states_from_slam.time = [obj.vehicle_states_from_slam.time, tf(i, 1).Transforms.Header.Stamp.Sec];
+                        obj.vehicle_states_from_slam.x = [obj.vehicle_states_from_slam.x, tf(i, 1).Transforms.Transform.Translation.X];
+                        obj.vehicle_states_from_slam.y = [obj.vehicle_states_from_slam.y, tf(i, 1).Transforms.Transform.Translation.Y];
+                        q = [tf(i, 1).Transforms.Transform.Rotation.W, tf(i, 1).Transforms.Transform.Rotation.X, tf(i, 1).Transforms.Transform.Rotation.Y, tf(i, 1).Transforms.Transform.Rotation.Z];
+                        [z, y, x] = quat2angle(q);
+                        obj.vehicle_states_from_slam.h = [obj.vehicle_states_from_slam.h, z];
+                    end
+                end
+            end
+       end
        
        function load_auto_flag(obj)
             bSel = select(obj.bag,'Topic','/state_out/rover_debug_state_out');
