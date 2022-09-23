@@ -31,8 +31,7 @@ classdef tire_curve_sysID_helper_class < handle
         vehicle_motor_current_command = struct('time', 0, 'motor_current', 0);
         desired_states = struct('time', 0, 'ud', 0, 'vd', 0, 'rd', 0);
         auto_flag_data = struct('time', 0, 'auto_flag', 0);
-        vehicle_SLAM = struct('time', 0, 'x', 0, 'y', 0, 'h', 0);
-        
+        vehicle_states_from_slam = struct('time', 0, 'x', 0, 'y', 0, 'h', 0);
         
         % signal stuff
         start_time_offset;
@@ -74,6 +73,7 @@ classdef tire_curve_sysID_helper_class < handle
             
             %Load data
             load_vehicle_states_data(obj);
+            load_vehicle_states_from_slam_data(obj);
             load_zonotope_data(obj);
             load_commands(obj)
             load_imu_data(obj);
@@ -87,7 +87,7 @@ classdef tire_curve_sysID_helper_class < handle
             reference_topic = '/state_out/rover_debug_state_out';
             set_standard_time(obj, reference_topic);
 %             structs_to_sync = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states", "auto_flag_data"];
-            structs_to_sync = ["vehicle_states", "vehicle_motor_current_command", "vehicle_encoder","desired_states", "auto_flag_data"];
+            structs_to_sync = ["vehicle_states", "vehicle_motor_current_command", "vehicle_encoder","desired_states", "auto_flag_data", "vehicle_states_from_slam"];
 %             structs_to_sync = ["vehicle_states", "vehicle_motor_current_command", "desired_states", "auto_flag_data"];
             
             synchronize_signals_sample_rate(obj, structs_to_sync);
@@ -100,7 +100,7 @@ classdef tire_curve_sysID_helper_class < handle
             % Auto filter signals 
             if obj.auto_flag_on
 % %                 structs_to_auto_filter = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states"];
-                structs_to_auto_filter = ["vehicle_states", "vehicle_motor_current_command", "vehicle_encoder", "desired_states"];
+                structs_to_auto_filter = ["vehicle_states", "vehicle_motor_current_command", "vehicle_encoder", "desired_states", "vehicle_states_from_slam"];
 %                 structs_to_auto_filter = ["vehicle_states", "vehicle_motor_current_command", "desired_states"];
                 
                 auto_filter(obj, structs_to_auto_filter)
@@ -225,6 +225,35 @@ classdef tire_curve_sysID_helper_class < handle
 
        end
        
+       function obj = load_vehicle_states_from_slam_data(obj)
+            bSel = select(obj.bag, 'Topic', '/tf');
+            tf = cell2mat(readMessages(bSel, 'DataFormat', 'struct'));
+            time_flag = false;
+            for i = 1:size(tf)
+                if size(tf(i).Transforms, 2) > 0
+                    if tf(i, 1).Transforms.Header.FrameId == "map" && tf(i, 1).Transforms.ChildFrameId == "velodyne_base_link"
+                        if time_flag == false
+                            time_0 = 0; % (cast(tf(i, 1).Transforms.Header.Stamp.Sec, 'double')*1e9 + cast(tf(i, 1).Transforms.Header.Stamp.Nsec, 'double'))*1e-9;
+                            obj.vehicle_states_from_slam.time = [(cast(tf(i, 1).Transforms.Header.Stamp.Sec, 'double')*1e9 + cast(tf(i, 1).Transforms.Header.Stamp.Nsec, 'double'))*1e-9];
+                            obj.vehicle_states_from_slam.x = [tf(i, 1).Transforms.Transform.Translation.X];
+                            obj.vehicle_states_from_slam.y = [tf(i, 1).Transforms.Transform.Translation.Y];
+                            q = [tf(i, 1).Transforms.Transform.Rotation.W, tf(i, 1).Transforms.Transform.Rotation.X, tf(i, 1).Transforms.Transform.Rotation.Y, tf(i, 1).Transforms.Transform.Rotation.Z];
+                            [z, y, x] = quat2angle(q);
+                            obj.vehicle_states_from_slam.h = [z];
+                            time_flag = true;
+                        else
+                            time = (cast(tf(i, 1).Transforms.Header.Stamp.Sec, 'double')*1e9 + cast(tf(i, 1).Transforms.Header.Stamp.Nsec, 'double'))*1e-9 - time_0;
+                            obj.vehicle_states_from_slam.time = [obj.vehicle_states_from_slam.time, time];
+                            obj.vehicle_states_from_slam.x = [obj.vehicle_states_from_slam.x, tf(i, 1).Transforms.Transform.Translation.X];
+                            obj.vehicle_states_from_slam.y = [obj.vehicle_states_from_slam.y, tf(i, 1).Transforms.Transform.Translation.Y];
+                            q = [tf(i, 1).Transforms.Transform.Rotation.W, tf(i, 1).Transforms.Transform.Rotation.X, tf(i, 1).Transforms.Transform.Rotation.Y, tf(i, 1).Transforms.Transform.Rotation.Z];
+                            [z, y, x] = quat2angle(q);
+                            obj.vehicle_states_from_slam.h = [obj.vehicle_states_from_slam.h, z];
+                        end
+                    end
+                end
+            end
+       end
        
        function load_auto_flag(obj)
             bSel = select(obj.bag,'Topic','/state_out/rover_debug_state_out');
@@ -277,14 +306,25 @@ classdef tire_curve_sysID_helper_class < handle
 
 
             % load in data
-            time = obj.vehicle_states.time;
-            x = obj.vehicle_states.x;
-            y = obj.vehicle_states.y;
-            h = obj.vehicle_states.h;
+            time = obj.vehicle_states_from_slam.time;
+            x = obj.vehicle_states_from_slam.x;
+            y = obj.vehicle_states_from_slam.y;
+            h = obj.vehicle_states_from_slam.h;
             
-            x = smooth(x,0.1,'rloess');
-            y = smooth(y);
-            h = smooth(h);
+%             x_and_y_good = ([0; diff(x)] ~= 0) && ([0; diff(y)] ~= 0);
+            x_and_y_good = [1];
+            for i = 2:length(x)
+                if x(i) ~= x(i-1) || y(i) ~= y(i-1)
+                    x_and_y_good = [x_and_y_good i];
+                end
+            end
+            time = time(x_and_y_good);
+            x = x(x_and_y_good);
+            y = y(x_and_y_good);
+            h = h(x_and_y_good);
+%             x = smooth(x,0.1,'rloess');
+%             y = smooth(y,0.1,'rloess');
+%             h = smooth(h,0.1,'rloess');
     
             % transform to x in vehicle frame
             for i=1:length(x)
