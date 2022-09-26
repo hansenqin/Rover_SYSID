@@ -5,5 +5,6 @@
     "Izz": 0.1375,
     "servo_offset": 0.5,
     "rw": 0.055,
-    "g": 9.81
+    "g": 9.81,
+    "robot_frame":"velodyne_base_link"
 }

@@ -1,7 +1,7 @@
 clear all;
 close all;
 clc;
-map = load('matlab.mat');
+map = load('sys_id_manual_driving_09_26.mat');
 imu = cell2mat(map.messageStruct_map('/imu/data'));
 % joint_states = cell2mat(map.messageStruct_map('/joint_states'));
 % state = cell2mat(map.messageStruc_map('/state_estimator/states'));
