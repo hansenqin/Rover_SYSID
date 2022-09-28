@@ -38,6 +38,8 @@ classdef tire_curve_sysID_helper_class < handle
         vehicle_angular_velocity = struct('time', 0, 'w', 0);
         vehicle_states_from_slam = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0, 'udot', 0, 'vdot', 0, 'rdot', 0);
         rover_debug_states = struct('time', 0, 'w', 0, 'delta_cmd', 0); 
+        trajectories = struct('trajectory', 0);
+        trajectory = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0, 'udot', 0, 'vdot', 0, 'rdot', 0, 'encoder_velocity', 0);
         % signal stuff
         start_time_offset;
         standard_time;  %standard usd to synchronize all signals
@@ -92,9 +94,9 @@ classdef tire_curve_sysID_helper_class < handle
             % Sync signals
             % rate, and all other topics will have their sample rates
             % synchronized to the standard sampling rate
-            obj.standard_time = obj.vehicle_states_from_slam.time; 
-            structs_to_sync = ["vehicle_encoder", "rover_debug_states"];
-            synchronize_signals_sample_rate(obj, structs_to_sync);
+%             structs_to_sync = ["vehicle_encoder", "rover_debug_states"];
+%             synchronize_signals_sample_rate(obj, structs_to_sync);
+            synchronize_encoder_with_trajectories(obj);
             
 %             obj.plot_tracking_data();
             
@@ -138,6 +140,14 @@ classdef tire_curve_sysID_helper_class < handle
             end
        end
        
+       function obj = synchronize_encoder_with_trajectories(obj)
+            
+            for traj_idx = 1:length(obj.trajectories)
+                standard_time = obj.trajectories(traj_idx).time;
+                time = obj.vehicle_encoder.time;
+                obj.trajectories(traj_idx).encoder_velocity = interp1(time(:), obj.vehicle_encoder.encoder_velocity, standard_time(:), 'linear')'; % 'extrap'            end
+            end
+       end
        
        function synchronize_signals_time(obj)
            %Might not be needed
@@ -230,13 +240,9 @@ classdef tire_curve_sysID_helper_class < handle
                     end
                 end
             end
-            
-            obj.vehicle_pose_from_slam.x = smoothdata(obj.vehicle_pose_from_slam.x, 'gaussian', 20);
-            obj.vehicle_pose_from_slam.y = smoothdata(obj.vehicle_pose_from_slam.y, 'gaussian', 15);
-            obj.vehicle_pose_from_slam.h = smoothdata(obj.vehicle_pose_from_slam.h, 'gaussian', 10);
        end
 
-       function obj = compute_velocity_from_slam_data(obj)
+       function obj = compute_temporary_velocity_from_slam_data(obj)
            x = obj.vehicle_pose_from_slam.x;
            y = obj.vehicle_pose_from_slam.y;
            h = obj.vehicle_pose_from_slam.h;
@@ -251,17 +257,13 @@ classdef tire_curve_sysID_helper_class < handle
                 r = [r, (h(i+1) - h(i)) / (time(i+1) - time(i) + 0.001)];
            end
 
-           u = smoothdata(u, 'gaussian', 20);
-           v = smoothdata(v, 'gaussian', 20);
-           r = smoothdata(r, 'gaussian', 20);
-
            obj.vehicle_velocities_derived_from_slam.u = u;
            obj.vehicle_velocities_derived_from_slam.v = v;
            obj.vehicle_velocities_derived_from_slam.r = r;
            obj.vehicle_velocities_derived_from_slam.time = time(1:end-1);
        end
 
-       function obj = compute_acceleration_from_slam_data(obj)
+       function obj = compute_temporary_acceleration_from_slam_data(obj)
            u = obj.vehicle_velocities_derived_from_slam.u;
            v = obj.vehicle_velocities_derived_from_slam.v;
            r = obj.vehicle_velocities_derived_from_slam.r;
@@ -276,19 +278,52 @@ classdef tire_curve_sysID_helper_class < handle
                 rdot = [rdot, (r(i+1) - r(i)) / (time(i+1) - time(i) + 0.001)];
            end
 
-           udot = smoothdata(udot, 'gaussian', 20);
-           vdot = smoothdata(vdot, 'gaussian', 20);
-           rdot = smoothdata(rdot, 'gaussian', 20);
-
            obj.vehicle_acceleration_derived_from_slam.udot = udot;
            obj.vehicle_acceleration_derived_from_slam.vdot = vdot;
            obj.vehicle_acceleration_derived_from_slam.rdot = rdot;
            obj.vehicle_acceleration_derived_from_slam.time = time(1:end-2);
        end
+
+       function obj = get_trajectories_from_slam(obj)
+            obj.trajectories = [];
+            start_idx = 1;
+            end_idx = 1;
+            threshHoldDistance = 0.6;
+            numOfTrajectories = 0;
+            while start_idx <= length(obj.vehicle_states_from_slam.x)-1
+                end_idx = start_idx + 1;
+                for i = start_idx+1:length(obj.vehicle_states_from_slam.x)-1
+                    distance = ((obj.vehicle_states_from_slam.x(i) - obj.vehicle_states_from_slam.x(i+1))^2 + (obj.vehicle_states_from_slam.y(i) - obj.vehicle_states_from_slam.y(i+1))^2)^0.5;  
+                    if distance > threshHoldDistance
+                        end_idx = i;
+                        break;
+                    end
+                end
+                if (end_idx - start_idx) > 10
+                    obj.trajectory.x = obj.vehicle_states_from_slam.x(start_idx:end_idx);
+                    obj.trajectory.y = obj.vehicle_states_from_slam.y(start_idx:end_idx);
+                    obj.trajectory.h = obj.vehicle_states_from_slam.h(start_idx:end_idx);
+                    obj.trajectory.time = obj.vehicle_states_from_slam.time(start_idx:end_idx);
+                    obj.trajectories = [obj.trajectories, obj.trajectory];
+                    numOfTrajectories = numOfTrajectories + 1;
+                end
+                start_idx = end_idx + 1;
+            end
+
+            disp([numOfTrajectories, " trajectories were detected"]);
+       end
+
+       function obj = smoothen_trajectories(obj)
+            
+       end
+
+       function obj = fit_bezier_curve(obj)
        
+       end
+
        function obj = compute_velocity_and_acceleration_from_slam_data(obj, displayPlot, removeNegativeU)
-           obj.compute_velocity_from_slam_data();
-           obj.compute_acceleration_from_slam_data();
+           obj.compute_temporary_velocity_from_slam_data();
+           obj.compute_temporary_acceleration_from_slam_data();
            
 %            To sync time
            obj.vehicle_states_from_slam.time = obj.vehicle_pose_from_slam.time(1:end-2);
@@ -305,15 +340,16 @@ classdef tire_curve_sysID_helper_class < handle
            obj.vehicle_states_from_slam.rdot = obj.vehicle_acceleration_derived_from_slam.rdot;
            
 %            disp(["Size before filter = ", size(obj.vehicle_states_from_slam.time) ]);
-           
+           removeNegativeUFilterValue = 0.1;
            if removeNegativeU
-                filter = obj.vehicle_states_from_slam.u > 0.001;
+                filter = obj.vehicle_states_from_slam.u > removeNegativeUFilterValue ;
                 field_names = fieldnames(obj.vehicle_states_from_slam);
                 for j = 1:length(field_names)
                     obj.vehicle_states_from_slam.(field_names{j}) = obj.vehicle_states_from_slam.(field_names{j})(filter);                
                 end      
            end
            
+           get_trajectories_from_slam(obj);
            
 %            disp(["Size before filter = ", size(obj.vehicle_states_from_slam.time) ]);
            
