@@ -28,7 +28,7 @@ classdef tire_curve_sysID_helper_class < handle
         % structs that store signals 
         vehicle_states = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0, 'w', 0, 'delta_cmd', 0);
 %         vehicle_delta_command = struct('time', 0, 'delta_cmd', 0);
-        vehicle_encoder = struct('time', 0, 'encoder_velocity', 0);
+        vehicle_encoder = struct('time', 0, 'encoder_position', 0, 'encoder_velocity', 0);
         vehicle_motor_current_command = struct('time', 0, 'motor_current', 0);
         desired_states = struct('time', 0, 'ud', 0, 'vd', 0, 'rd', 0);
         auto_flag_data = struct('time', 0, 'auto_flag', 0);
@@ -36,8 +36,8 @@ classdef tire_curve_sysID_helper_class < handle
         vehicle_velocities_derived_from_slam = struct('time', 0, 'u', 0, 'v', 0, 'r', 0);
         vehicle_acceleration_derived_from_slam = struct('time', 0, 'udot', 0, 'vdot', 0, 'rdot', 0);
         vehicle_angular_velocity = struct('time', 0, 'w', 0);
-        vehicle_states_from_slam = struct('time', 0, 'u', 0, 'v', 0, 'r', 0, 'udot', 0, 'vdot', 0, 'rdot', 0);
-        rover_debug_states = struct('time', 0, 'w', 0, 'delta_cmd', 0);
+        vehicle_states_from_slam = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0, 'udot', 0, 'vdot', 0, 'rdot', 0);
+        rover_debug_states = struct('time', 0, 'w', 0, 'delta_cmd', 0); 
         % signal stuff
         start_time_offset;
         standard_time;  %standard usd to synchronize all signals
@@ -86,31 +86,28 @@ classdef tire_curve_sysID_helper_class < handle
             load_imu_data(obj); 
             load_param_gen_data(obj);
             load_auto_flag(obj);
-            compute_velocity_and_acceleration_from_slam_data(obj, true);
+            compute_velocity_and_acceleration_from_slam_data(obj, false, true); % Arg2 = Enable/Disable Tracking Plot || Arg2 = Enable/Disable Filter +ve u values
 
             
             % Sync signals
-            % reference_topic is used as the standard sampling
             % rate, and all other topics will have their sample rates
             % synchronized to the standard sampling rate
-            reference_topic = '/state_out/rover_debug_state_out';
-            set_standard_time(obj, reference_topic);
-%             structs_to_sync = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states", "auto_flag_data"];
-%             structs_to_sync = ["vehicle_states", "vehicle_motor_current_command", "vehicle_encoder","desired_states", "auto_flag_data"];
-            
-            structs_to_sync = ["vehicle_pose_from_slam", "vehicle_encoder", "vehicle_motor_current_command", "rover_debug_states"];
+            obj.standard_time = obj.vehicle_states_from_slam.time; 
+            structs_to_sync = ["vehicle_encoder", "rover_debug_states"];
             synchronize_signals_sample_rate(obj, structs_to_sync);
+            
+%             obj.plot_tracking_data();
             
             % Low pass signals
 %             structs_to_low_pass = ["vehicle_states"];
 %             lowpass_signals(obj, structs_to_low_pass)
             
             % Auto filter signals 
-            if obj.auto_flag_on
-%                 structs_to_auto_filter = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states"];
-                structs_to_auto_filter = ["vehicle_states", "vehicle_motor_current_command", "vehicle_encoder", "desired_states"];
-                auto_filter(obj, structs_to_auto_filter)
-            end
+%             if obj.auto_flag_on
+% %                 structs_to_auto_filter = ["vehicle_states", "vehicle_delta_command", "vehicle_motor_current_command", "desired_states"];
+%                 structs_to_auto_filter = ["vehicle_states", "vehicle_motor_current_command", "vehicle_encoder", "desired_states"];
+%                 auto_filter(obj, structs_to_auto_filter)
+%             end
             
        end
        
@@ -124,12 +121,9 @@ classdef tire_curve_sysID_helper_class < handle
        end
        
        
-       function obj = set_standard_time(obj, reference_topic)
-           
-           bSel = select(obj.bag,'Topic',reference_topic);
-           msgStructs = readMessages(bSel,'DataFormat','struct');
-           obj.standard_time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
-       end
+%        function obj = set_standard_time(obj, time)
+%            obj.standard_time = time;
+%        end
        
        
        function obj = synchronize_signals_sample_rate(obj, structs)
@@ -154,7 +148,6 @@ classdef tire_curve_sysID_helper_class < handle
        function auto_filter(obj, structs)
            % Only keeps the data from the automatic driving mode insteadvehicle_states
            % of manual driving
-           vehicle_states
            for i = 1:length(structs) 
                 field_names = fieldnames(obj.(structs(i)));
                 for j = 1:length(field_names)
@@ -207,7 +200,14 @@ classdef tire_curve_sysID_helper_class < handle
             bSel = select(obj.bag,'Topic','/joint_states');
             msgStructs = readMessages(bSel,'DataFormat','struct');
             obj.vehicle_encoder.time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
-            obj.vehicle_encoder.encoder_velocity = cell2mat(cellfun(@(s)s.Velocity,msgStructs,'uni',0));
+            obj.vehicle_encoder.encoder_position = cell2mat(cellfun(@(s)s.Position,msgStructs,'uni',0));
+            
+            obj.vehicle_encoder.encoder_velocity = (diff(obj.vehicle_encoder.encoder_position)./diff(obj.vehicle_encoder.time))';
+            obj.vehicle_encoder.encoder_velocity  = -obj.vehicle_encoder.encoder_velocity*2*pi/(4096);
+            obj.vehicle_encoder.encoder_velocity = smoothdata(obj.vehicle_encoder.encoder_velocity, 'gaussian', 20);
+            
+            obj.vehicle_encoder.encoder_position = obj.vehicle_encoder.encoder_position(1:end-1);
+            obj.vehicle_encoder.time = obj.vehicle_encoder.time(1:end-1);
        end
        
        function obj = load_vehicle_pose_from_slam_data(obj)
@@ -286,11 +286,12 @@ classdef tire_curve_sysID_helper_class < handle
            obj.vehicle_acceleration_derived_from_slam.time = time(1:end-2);
        end
        
-       function obj = compute_velocity_and_acceleration_from_slam_data(obj, displayPlot)
+       function obj = compute_velocity_and_acceleration_from_slam_data(obj, displayPlot, removeNegativeU)
            obj.compute_velocity_from_slam_data();
            obj.compute_acceleration_from_slam_data();
-
+           
 %            To sync time
+           obj.vehicle_states_from_slam.time = obj.vehicle_pose_from_slam.time(1:end-2);
            obj.vehicle_states_from_slam.x = obj.vehicle_pose_from_slam.x(1:end-2);
            obj.vehicle_states_from_slam.y = obj.vehicle_pose_from_slam.y(1:end-2);
            obj.vehicle_states_from_slam.h = obj.vehicle_pose_from_slam.h(1:end-2);
@@ -302,6 +303,21 @@ classdef tire_curve_sysID_helper_class < handle
            obj.vehicle_states_from_slam.udot = obj.vehicle_acceleration_derived_from_slam.udot;
            obj.vehicle_states_from_slam.vdot = obj.vehicle_acceleration_derived_from_slam.vdot;
            obj.vehicle_states_from_slam.rdot = obj.vehicle_acceleration_derived_from_slam.rdot;
+           
+%            disp(["Size before filter = ", size(obj.vehicle_states_from_slam.time) ]);
+           
+           if removeNegativeU
+                filter = obj.vehicle_states_from_slam.u > 0.001;
+                field_names = fieldnames(obj.vehicle_states_from_slam);
+                for j = 1:length(field_names)
+                    obj.vehicle_states_from_slam.(field_names{j}) = obj.vehicle_states_from_slam.(field_names{j})(filter);                
+                end      
+           end
+           
+           
+%            disp(["Size before filter = ", size(obj.vehicle_states_from_slam.time) ]);
+           
+
            if displayPlot == true
               obj.plot_tracking_data();
            end
@@ -315,19 +331,19 @@ classdef tire_curve_sysID_helper_class < handle
             plot(obj.vehicle_states_from_slam.udot, 'k', 'DisplayName', 'SLAM UDot Smoothened', 'LineWidth', 2);
             hold off;
             legend;
-            figure(2);
-            hold on;
-            plot(obj.vehicle_states_from_slam.y, 'r', 'DisplayName', 'SLAM Y Smoothened', 'LineWidth', 2);
-            plot(obj.vehicle_states_from_slam.v, 'b', 'DisplayName', 'SLAM V Smoothened', 'LineWidth', 2);
-            plot(obj.vehicle_states_from_slam.vdot, 'k', 'DisplayName', 'SLAM VDot Smoothened', 'LineWidth', 2);
-            hold off;
-            legend;
-            figure(3);
-            hold on;
-            plot(obj.vehicle_states_from_slam.h, 'r', 'DisplayName', 'SLAM H Smoothened', 'LineWidth', 2);
-            plot(obj.vehicle_states_from_slam.r, 'b', 'DisplayName', 'SLAM R Smoothened', 'LineWidth', 2);
-            plot(obj.vehicle_states_from_slam.rdot, 'k', 'DisplayName', 'SLAM RDot Smoothened', 'LineWidth', 2);
-            hold off;
+%             figure(2);
+%             hold on;
+%             plot(obj.vehicle_states_from_slam.y, 'r', 'DisplayName', 'SLAM Y Smoothened', 'LineWidth', 2);
+%             plot(obj.vehicle_states_from_slam.v, 'b', 'DisplayName', 'SLAM V Smoothened', 'LineWidth', 2);
+%             plot(obj.vehicle_states_from_slam.vdot, 'k', 'DisplayName', 'SLAM VDot Smoothened', 'LineWidth', 2);
+%             hold off;
+%             legend;
+%             figure(3);
+%             hold on;
+%             plot(obj.vehicle_states_from_slam.h, 'r', 'DisplayName', 'SLAM H Smoothened', 'LineWidth', 2);
+%             plot(obj.vehicle_states_from_slam.r, 'b', 'DisplayName', 'SLAM R Smoothened', 'LineWidth', 2);
+%             plot(obj.vehicle_states_from_slam.rdot, 'k', 'DisplayName', 'SLAM RDot Smoothened', 'LineWidth', 2);
+%             hold off;
 
             legend;
        end
@@ -378,6 +394,7 @@ classdef tire_curve_sysID_helper_class < handle
        
 
        function [xLinearCoef, fLinearCoef, rLinearCoef, lambda, alphaf, alphar, F_x, F_yf, F_yr] = get_tire_curve_coefficients(obj)
+            time = obj.vehicle_states_from_slam.time;
             x = obj.vehicle_states_from_slam.x;
             y = obj.vehicle_states_from_slam.y;
             h = obj.vehicle_states_from_slam.h;
@@ -388,23 +405,22 @@ classdef tire_curve_sysID_helper_class < handle
             vdot = obj.vehicle_states_from_slam.vdot;
             rdot = obj.vehicle_states_from_slam.rdot;
             
-%             w = obj.vehicle_encoder.encoder_velocity(1:end-1);
-%             w = w/(-0.5*pi*10^7);
-            w = obj.rover_debug_states.w;
+             w = obj.vehicle_encoder.encoder_velocity;
+%            w = obj.rover_debug_states.w;
 %             delta=obj.vehicle_delta_command.delta_cmd(1:end-1)+obj.servo_offset;
             delta = obj.rover_debug_states.delta_cmd;
         
             % Calculate the longitudinal force
             % Current method
-%             Fx_est = 0.4*obj.vehicle_motor_current_command.motor_current - 6.0897*tanh(10.5921*obj.vehicle_states.u);
+%             F_x = 0.4*obj.vehicle_motor_current_command.motor_current - 6.0897*tanh(10.5921*obj.vehicle_states_from_slam.u);
 %             F_xr = Fx_est(1:end-1);
 %             F_xfw = Fx_est(1:end-1);
 
             % Calculate the slip ratio
             lambda = [];
-            lambda_numerator = obj.rw.*w-u;
+            lambda_numerator = obj.rw.*w-u';
             for i = 1:length(lambda_numerator)
-                if lambda_numerator < 0
+                if lambda_numerator(i) < 0
                     lambda = [lambda, lambda_numerator(i)./sqrt(u(i).^2+0.05)];
                 else
                     lambda = [lambda, lambda_numerator(i)./sqrt((obj.rw.*w(i)).^2+0.05)];
@@ -430,6 +446,7 @@ classdef tire_curve_sysID_helper_class < handle
             F_xSelected = F_x(abs(lambda)<0.45);
             F_yfSelected = F_yfSorted(abs(alphafSorted)<0.2);
             F_yrSelected = F_yrSorted(abs(alpharSorted)<0.2);
+            
             % Longitudinal linear curve through (0,0) using fmincon
             x0 = 10;
             f = @(x) norm(obj.m.*obj.g.*lambdaSelected'.*x-F_xSelected);
@@ -440,7 +457,7 @@ classdef tire_curve_sysID_helper_class < handle
             fLinearCoef = fmincon(f,x0);
             f = @(x) norm(alpharSelected*x-F_yrSelected);
             rLinearCoef = fmincon(f,x0);
-            % Nonlinear curve using fmincon
+%             Nonlinear curve using fmincon
 %             x0 = [1 1];
 %             f = @(x) norm(x(1)*tanh(x(2)*alphaf)-F_yf);
 %             fNonlinearCoef = fmincon(f,x0);
@@ -453,7 +470,7 @@ classdef tire_curve_sysID_helper_class < handle
             figure(1);
             scatter(lambda, F_x);
             hold on;
-            xLinear = @(t) xLinearCoef(1)*t;
+            xLinear = @(t) obj.m*obj.g*xLinearCoef(1)*t/(obj.lf+obj.lr);
             t = -0.2:0.01:0.2;
             plot(t, xLinear(t), "LineWidth", 2);
             xlabel("Front Slip Ratio");
@@ -463,29 +480,29 @@ classdef tire_curve_sysID_helper_class < handle
             hold off;
 
             % Front tire lateral
-            figure(2);
-            scatter(alphaf, F_yf);
-            hold on;
-            fLinear = @(t) fLinearCoef(1)*t;
-            t = -0.2:0.01:0.2;
-            plot(t, fLinear(t), "LineWidth", 2);
-            xlabel("Front Slip Angle");
-            ylabel("Front Lateral Tire Force (N)");
-            title("Fywf="+round(fLinearCoef(1),2)+"*alpha")
-            xlim([-0.3,0.3]);
-            hold off;
-            
-            % Rear tire lateral
-            figure(3);
-            scatter(alphar, F_yr);
-            hold on;
-            rLinear = @(t) rLinearCoef(1)*t;
-            t = -0.2:0.01:0.2;
-            plot(t, rLinear(t), "LineWidth", 2);
-            xlabel("Rear Slip Angle");
-            ylabel("Rear Lateral Tire Force (N)");
-            title("Fywr="+round(rLinearCoef(1),2)+"*alpha");
-            xlim([-0.3,0.3]);
+%             figure(2);
+%             scatter(alphaf, F_yf);
+%             hold on;
+%             fLinear = @(t) fLinearCoef(1)*t;
+%             t = -0.2:0.01:0.2;
+%             plot(t, fLinear(t), "LineWidth", 2);
+%             xlabel("Front Slip Angle");
+%             ylabel("Front Lateral Tire Force (N)");
+%             title("Fywf="+round(fLinearCoef(1),2)+"*alpha")
+%             xlim([-0.3,0.3]);
+%             hold off;
+%             
+%             % Rear tire lateral
+%             figure(3);
+%             scatter(alphar, F_yr);
+%             hold on;
+%             rLinear = @(t) rLinearCoef(1)*t;
+%             t = -0.2:0.01:0.2;
+%             plot(t, rLinear(t), "LineWidth", 2);
+%             xlabel("Rear Slip Angle");
+%             ylabel("Rear Lateral Tire Force (N)");
+%             title("Fywr="+round(rLinearCoef(1),2)+"*alpha");
+%             xlim([-0.3,0.3]);
             hold off;
        end
    end
