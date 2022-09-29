@@ -71,6 +71,8 @@ classdef tire_curve_sysID_helper_class < handle
             obj.robot_frame = string(rover_config.robot_frame);
             % set default flags
             obj.auto_flag_on = 0;
+            obj.removeNegativeUFilterValue = 0.4; %Filters out u values under 0.4 m/s
+           
            
             % parse optional intputs
             for i = 1:2:length(varargin) % work for a list of name-value pairs
@@ -288,7 +290,7 @@ classdef tire_curve_sysID_helper_class < handle
             obj.trajectories = [];
             start_idx = 1;
             end_idx = 1;
-            threshHoldDistance = 0.6;
+            threshHoldDistance = 1.0;
             numOfTrajectories = 0;
             while start_idx <= length(obj.vehicle_states_from_slam.x)-1
                 end_idx = start_idx + 1;
@@ -340,9 +342,8 @@ classdef tire_curve_sysID_helper_class < handle
            obj.vehicle_states_from_slam.rdot = obj.vehicle_acceleration_derived_from_slam.rdot;
            
 %            disp(["Size before filter = ", size(obj.vehicle_states_from_slam.time) ]);
-           removeNegativeUFilterValue = 0.1;
            if removeNegativeU
-                filter = obj.vehicle_states_from_slam.u > removeNegativeUFilterValue ;
+                filter = obj.vehicle_states_from_slam.u > obj.removeNegativeUFilterValue ;
                 field_names = fieldnames(obj.vehicle_states_from_slam);
                 for j = 1:length(field_names)
                     obj.vehicle_states_from_slam.(field_names{j}) = obj.vehicle_states_from_slam.(field_names{j})(filter);                
