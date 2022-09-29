@@ -456,7 +456,7 @@ classdef tire_curve_sysID_helper_class < handle
             % Calculate the slip ratio
             lambda = [];
             lambda_numerator = obj.rw.*w-u';
-            for i = 1:length(lambda_numerator)
+            for i = 1:length(udot)
                 if lambda_numerator(i) < 0
                     lambda = [lambda, lambda_numerator(i)./sqrt(u(i).^2+0.05)];
                 else
@@ -542,5 +542,54 @@ classdef tire_curve_sysID_helper_class < handle
 %             xlim([-0.3,0.3]);
             hold off;
        end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% COPY AND PASTED BEZIER
+       function [t,y,P]=fit_bezier(obj, time, a, ad)
+           % fit bezier for each x and y in the trajectory
+           % note that a=x or a=y depending on what you are calculating
+           % return y, a function that you can call as y(t), where t is the
+           % time vector. P is also the coefficients of the bezier function
+           
+           % define the first point
+           ad_0 = ad(1);
+           ad_dot_0=(ad(1)-ad(2))/(time(1)-time(2));
+
+           % This means to make the bezier end at a specific point (e.g. time = 1s)
+% % %            index = -1;
+% % %            dist = 10;
+% % %            for i = 1:1:length(time)
+% % %             if abs(time(i)-1)<dist
+% % %                 dist = abs(time(i)-1);
+% % %                 index=i;
+% % %             end
+% % %            end
+% %            % define the point at 1
+% % %            a_1 = a(index);
+% % %            a_dot_1 = (a(index-1)-a(index+1))/(time(index-1)-time(index+1));
+
+            % Define the last point (meaning last point of the time array)
+            a_1 = a(end);
+            a_dot_1 = (a(end-1)-a(end))/(time(end-1)-time(end)); 
+            % This might throw an error, change the a_1 to end-1 if it does
+
+           % Solve
+           b = [ad_0; a_1; ad_dot_0; a_dot_1];
+           syms t;
+           A_1 = @(t)[(1-t).^5, 5.*t.*(1-t).^4, 10.*(t.^2).*(1-t).^3, 10.*(t.^3).*(1-t).^2, 5.*(t.^4).*(1-t).^1, t.^5];
+           A_2 = diff(A_1, t);
+           A_2 = matlabFunction(A_2);
+           A = [A_1(0); A_1(1); A_2(0); A_2(1)];
+           
+           x0 = [1, 1, 1, 1, 1, 1];
+           A_points = A_1(time);
+           f = @(x) norm(A_points*[x(1); x(2); x(3); x(4); x(5); x(6)]-a);
+           P=fmincon(f, x0, [], [], A, b);
+          
+           t=0:0.01:1;
+           y = sum(sym(A_1).*P);
+           y = matlabFunction(y);
+       end
+
+       %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% END COPY AND PASTE BEZIER
    end
 end
