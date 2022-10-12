@@ -27,12 +27,15 @@ classdef rover_sysid_class < handle
         %% Structs to store signals
         rover_debug_states_out = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0, 'w', 0, 'delta_cmd', 0);
         desired_states = struct('time', 0, 'ud', 0, 'vd', 0, 'rd', 0);
-        wheel_encoder = struct('time', 0, 'encoder_position', 0);
+        wheel_encoder = struct('time', 0, 'encoder_position', 0, 'encoder_velocity', 0);
         vehicle_states_from_slam = struct('time', 0, 'x', 0, 'y', 0, 'h', 0);
         vehicle_states_from_mocap = struct('time', 0, 'x', 0, 'y', 0, 'h', 0);
-        trajectory = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'encoder_position', 0, 'delta_cmd', 0);
+        trajectory = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'fitted_x', 0, 'fitted_y', 0, 'fitted_h', 0, ...
+                            'fitted_theta', 0, 'encoder_position', 0, 'delta_cmd', 0, 'num_diff_u', 0, 'num_diff_v', 0, ...
+                            'num_diff_r', 0, 'num_diff_encoder_velocity', 0, 'encoder_velocity', 0);
         trajectories = struct('trajectory', 0);
-
+        bezier_curve = struct('time', 0, 'x', 0, 'y', 0, 'y_fitted_on_x', 0, 'dy_dx', 0, 'velocity_x_global', 0, ...
+                                'velocity_y_global', 0, 'velocity_longitudinal', 0, 'velocity_lateral', 0);
         % signal stuff
         start_time_offset;
         standard_time;  %standard usd to synchronize all signals
@@ -129,11 +132,11 @@ classdef rover_sysid_class < handle
                 obj.wheel_encoder.time = cell2mat(cellfun(@(s)cast(s.Header.Stamp.Sec,'double')*1e9+cast(s.Header.Stamp.Nsec,'double'),msgStructs,'uni',0))*1e-9;
                 obj.wheel_encoder.encoder_position = cell2mat(cellfun(@(s)s.Position,msgStructs,'uni',0));
                 
-%                 obj.wheel_encoder.encoder_velocity = (diff(obj.wheel_encoder.encoder_position)./diff(obj.wheel_encoder.time));
-%                 obj.wheel_encoder.encoder_velocity  = -obj.wheel_encoder.encoder_velocity*2*pi/(4096);
-%                 obj.vehicle_encoder.encoder_velocity = smoothdata(obj.vehicle_encoder.encoder_velocity, 'gaussian', 20);
-%                 obj.wheel_encoder.encoder_position = obj.wheel_encoder.encoder_position(1:end-1);
-%                 obj.wheel_encoder.time = obj.wheel_encoder.time(1:end-1);
+                obj.wheel_encoder.encoder_velocity = (diff(obj.wheel_encoder.encoder_position)./diff(obj.wheel_encoder.time));
+                obj.wheel_encoder.encoder_velocity  = -obj.wheel_encoder.encoder_velocity*2*pi/(4096);
+                obj.wheel_encoder.encoder_velocity = smoothdata(obj.wheel_encoder.encoder_velocity, 'gaussian', 20);
+                obj.wheel_encoder.encoder_position = obj.wheel_encoder.encoder_position(1:end-1);
+                obj.wheel_encoder.time = obj.wheel_encoder.time(1:end-1);
            end
 
            function obj = load_vehicle_states_from_slam_data(obj)
@@ -216,6 +219,7 @@ classdef rover_sysid_class < handle
                h = obj.vehicle_states_from_mocap.h;
                time = obj.vehicle_states_from_mocap.time;
                encoder_position = obj.wheel_encoder.encoder_position;
+               numerical_diff_encoder_velocity = obj.wheel_encoder.encoder_velocity;
                delta_cmd = obj.rover_debug_states_out.delta_cmd;
                u = [];
                v = [];
@@ -246,13 +250,16 @@ classdef rover_sysid_class < handle
                encoder_position = encoder_position(1:end-2);
                delta_cmd = delta_cmd(1:end-2);
 
-               removeNegativeUFilterValue = 0.0;
+               removeNegativeUFilterValue = 0.2;
                removeNegativeU = true;
                if removeNegativeU
                     filter = u > removeNegativeUFilterValue ;
                     x = x(filter);
                     y = y(filter);
                     h = h(filter);
+                    u = u(filter);
+                    v = v(filter);
+                    r = r(filter);
                     encoder_position = encoder_position(filter);
                     delta_cmd = delta_cmd(filter);
                end
@@ -270,12 +277,16 @@ classdef rover_sysid_class < handle
                            break;
                        end
                    end
-                   if (end_idx - start_idx) > 10
+                   if (end_idx - start_idx) > 30
                        obj.trajectory.x =  x(start_idx:end_idx)';
                        obj.trajectory.y =  y(start_idx:end_idx)';
                        obj.trajectory.h =  h(start_idx:end_idx)';
+                       obj.trajectory.num_diff_u = u(start_idx:end_idx)';
+                       obj.trajectory.num_diff_v = v(start_idx:end_idx)';
+                       obj.trajectory.num_diff_r = r(start_idx:end_idx)';
                        obj.trajectory.time =  time(start_idx:end_idx)';
                        obj.trajectory.encoder_position  = encoder_position (start_idx:end_idx)';
+                       obj.trajectory.numerical_diff_encoder_velocity  = numerical_diff_encoder_velocity (start_idx:end_idx)';
                        obj.trajectory.delta_cmd = delta_cmd(start_idx:end_idx)';
                        obj.trajectories = [obj.trajectories, obj.trajectory];
                        numOfTrajectories = numOfTrajectories + 1;
@@ -287,70 +298,166 @@ classdef rover_sysid_class < handle
            end
 
            function obj = fit_bezier_to_trajectories(obj)
-               tracking = ["x", "y", "h", "encoder_position"];
                for i = 1:length(obj.trajectories)
-               
-               % fit bezier for each x and y in the trajectory
-               % note that a=x or a=y depending on what you are calculating
-               % return y, a function that you can call as y(t), where t is the
-               % time vector. P is also the coefficients of the bezier function
-               for j = 1:length(tracking)
-                   a = obj.trajectories(i).(tracking(j));
+                   %% Load variables in x, y, time for bezier curve fitting
+                   x = obj.trajectories(i).x;
+                   y = obj.trajectories(i).y;
+                   encoder_position = obj.trajectories(i).encoder_position;
                    time = obj.trajectories(i).time;
-                   time_original = time;
-                   time_range = time(end)-time(1);
-                   time = (time-time(1))./time_range;
-        
-                   % define the first point
-                   ad_0 = a(1);
-        
-                   % Define the last point (meaning last point of the time array)
-                   a_1 = a(end);
-        
-                   % Solve
-                   b = [ad_0; a_1];
-                   syms t;
-                   A_1 = @(t)[(1-t).^5; 5.*t.*(1-t).^4; 10.*(t.^2).*(1-t).^3; 10.*(t.^3).*(1-t).^2; 5.*(t.^4).*(1-t).^1; t.^5];
-                   A_2 = diff(A_1, t);
-                   A_2 = matlabFunction(A_2);
-                   A = [A_1(0), A_1(1)]';
+
+                   %% Fit Bezier curves on (time, x), (time, y), (x, y), (vx, vy), (time, encoder_position)
+
+                   [fitted_x, fx, vx_global, ax_global] =    fit_bezier_curve(obj, time, x);
+                   [fitted_y, fy, vy_global, ay_global] =    fit_bezier_curve(obj, time, y);
+                   [fitted_y_over_x, f_x, slope_of_f_x, d2_f_x] =    fit_bezier_curve(obj, fitted_x, fitted_y);
+                   [fitted_vy_over_vx, f_vx, slope_of_f_vx, d2_f_vx] =    fit_bezier_curve(obj, vx_global, vy_global);
+                   [fitted_encoder_position, f_encoder_position, encoder_velocity, enocoder_acc] =    fit_bezier_curve(obj, time, encoder_position);
                    
-                   x0 = [1, 1, 1, 1, 1, 1];
-                   A_points = A_1(time);
-                   f = @(x) norm(A_points'*[x(1); x(2); x(3); x(4); x(5); x(6)]-a');
-                   P=fmincon(f, x0, [], [], A, b);
-                  
-                   y = sym(A_1)'*P';
-                   y = matlabFunction(y);
-        
-                   y = y(time);
-                   
-                   diff_bez_norm = sym(A_2)'*P';
-                   diff_time = 1/time_range;
-                   velocity = diff_bez_norm * diff_time;
-                   acceleration = diff(velocity, t)/time_range;
-                   velocity = matlabFunction(velocity);
-                   acceleration = matlabFunction(acceleration);
-                   velocity = velocity(time);
-                   acceleration = acceleration(time);
-                   if tracking(j) == "x"
-                        obj.trajectories(i).u = velocity;
-                        obj.trajectories(i).udot = acceleration;
-                   elseif tracking(j) == "y"
-                       obj.trajectories(i).v = velocity;
-                       obj.trajectories(i).vdot = acceleration;
-                   elseif tracking(j) == "h"
-                       obj.trajectories(i).r = velocity;
-                       obj.trajectories(i).rdot = acceleration;
-                   else
-                       obj.trajectories(i).encoder_position = y;
-                       obj.trajectories(i).encoder_velocity = -velocity*2*pi/(4096);
-                   end
-                   
-                   time = time_original;
+
+                   %% Get magnitude of v_global and a_global
+                   v_global = sqrt(vx_global.^2 + vy_global.^2);
+                   a_global = sqrt(ax_global.^2 + ay_global.^2);
+
+                   %% Find theta of vectors from the atan(y/x)                   
+                   theta_v_global = atan(vy_global./vx_global);
+                   theta_a_global = atan(ay_global./ax_global);
+
+                   %% Get theta from the slope of fitted function                   
+                   theta_over_f_x = atan(slope_of_f_x);
+                   theta_over_f_vx = atan(slope_of_f_vx);
+
+                   %% Get Longitdunal and Lateral componenets of the vectors
+
+                   v_longitudnal = cos(theta_v_global - theta_over_f_x) .* v_global;
+                   v_lateral = sin(theta_v_global - theta_over_f_x) .* v_global;
+
+                   a_longitudnal = cos(theta_a_global - theta_over_f_x) .* a_global;
+                   a_lateral = sin(theta_a_global - theta_over_f_x) .* a_global;
+
+                   %% Save the values in the trajectories struct
+
+                   obj.trajectories(i).fitted_x = fitted_x;
+                   obj.trajectories(i).u = v_longitudnal;
+                   obj.trajectories(i).udot = a_longitudnal;
+
+                   obj.trajectories(i).fitted_y = fitted_y;
+                   obj.trajectories(i).v = v_lateral;
+                   obj.trajectories(i).vdot = a_lateral;
+
+                   [fitted_theta, ftheta, yaw_global, yawdotglobal] = fit_bezier_curve(obj, time, theta_over_f_x);
+
+                   obj.trajectories(i).fitted_theta = fitted_theta;
+                   obj.trajectories(i).r = yaw_global;
+                   obj.trajectories(i).rdot = yawdotglobal;
+
+                   obj.trajectories(i).encoder_position = fitted_encoder_position;
+                   obj.trajectories(i).encoder_velocity = -encoder_velocity*2*pi/(4096);
                end
-            end
-        end
+           end
+
+           function [fitted_y, f_of_x, first_derivative, second_derivative] =   fit_bezier_curve(obj, x, y)
+               a = y;
+               time = x;
+               time_original = time;
+               time_range = time(end)-time(1);
+               time = (time-time(1))./time_range;
+    
+               % define the first point
+               ad_0 = a(1);
+    
+               % Define the last point (meaning last point of the time array)
+               a_1 = a(end);
+    
+               % Solve
+               b = [ad_0; a_1];
+               syms t;
+               A_1 = @(t)[(1-t).^5; 5.*t.*(1-t).^4; 10.*(t.^2).*(1-t).^3; 10.*(t.^3).*(1-t).^2; 5.*(t.^4).*(1-t).^1; t.^5];
+               A_2 = diff(A_1, t);
+               A_2 = matlabFunction(A_2);
+               A = [A_1(0), A_1(1)]';
+               
+               x0 = [1, 1, 1, 1, 1, 1];
+               A_points = A_1(time);
+               f = @(x) norm(A_points'*[x(1); x(2); x(3); x(4); x(5); x(6)]-a');
+               P=fmincon(f, x0, [], [], A, b);
+              
+               y = sym(A_1)'*P';
+               f_of_x = matlabFunction(y);
+    
+               fitted_y = f_of_x(time);
+               
+               diff_bez_norm = sym(A_2)'*P';
+               diff_time = 1/time_range;
+               velocity = diff_bez_norm * diff_time;
+               acceleration = diff(velocity, t)/time_range;
+               velocity = matlabFunction(velocity);
+               acceleration = matlabFunction(acceleration);
+               first_derivative = velocity(time);
+               second_derivative = acceleration(time);
+           
+           end
+
+               
+%                for j = 1:length(tracking)
+%                    a = obj.trajectories(i).(tracking(j));
+%                    time = obj.trajectories(i).time;
+%                    time_original = time;
+%                    time_range = time(end)-time(1);
+%                    time = (time-time(1))./time_range;
+%         
+%                    % define the first point
+%                    ad_0 = a(1);
+%         
+%                    % Define the last point (meaning last point of the time array)
+%                    a_1 = a(end);
+%         
+%                    % Solve
+%                    b = [ad_0; a_1];
+%                    syms t;
+%                    A_1 = @(t)[(1-t).^5; 5.*t.*(1-t).^4; 10.*(t.^2).*(1-t).^3; 10.*(t.^3).*(1-t).^2; 5.*(t.^4).*(1-t).^1; t.^5];
+%                    A_2 = diff(A_1, t);
+%                    A_2 = matlabFunction(A_2);
+%                    A = [A_1(0), A_1(1)]';
+%                    
+%                    x0 = [1, 1, 1, 1, 1, 1];
+%                    A_points = A_1(time);
+%                    f = @(x) norm(A_points'*[x(1); x(2); x(3); x(4); x(5); x(6)]-a');
+%                    P=fmincon(f, x0, [], [], A, b);
+%                   
+%                    y = sym(A_1)'*P';
+%                    y = matlabFunction(y);
+%         
+%                    y = y(time);
+%                    
+%                    diff_bez_norm = sym(A_2)'*P';
+%                    diff_time = 1/time_range;
+%                    velocity = diff_bez_norm * diff_time;
+%                    acceleration = diff(velocity, t)/time_range;
+%                    velocity = matlabFunction(velocity);
+%                    acceleration = matlabFunction(acceleration);
+%                    velocity = velocity(time);
+%                    acceleration = acceleration(time);
+%                    if tracking(j) == "x"
+%                         obj.trajectories(i).fitted_x = y;
+%                         obj.trajectories(i).u = velocity;
+%                         obj.trajectories(i).udot = acceleration;
+%                    elseif tracking(j) == "y"
+%                        obj.trajectories(i).fitted_y = y;
+%                        obj.trajectories(i).v = velocity;
+%                        obj.trajectories(i).vdot = acceleration;
+%                    elseif tracking(j) == "h"
+%                        obj.trajectories(i).fitted_h = y;
+%                        obj.trajectories(i).r = velocity;
+%                        obj.trajectories(i).rdot = acceleration;
+%                    else
+%                        obj.trajectories(i).encoder_position = y;
+%                        obj.trajectories(i).encoder_velocity = -velocity*2*pi/(4096);
+%                    end
+%                    
+%                    time = time_original;
+%                end
+%             end
+%         end
           
     
        function plot_tracking_data(obj)
@@ -441,7 +548,7 @@ classdef rover_sysid_class < handle
             % Longitudinal
             close all;
             figure(1);
-            scatter(-lambda+0.085, F_x);
+            scatter(-lambda, F_x);
             hold on;
             xLinear = @(t) obj.m*obj.g*obj.lf*xLinearCoef(1)*t/(obj.lf+obj.lr);
             t = -0.2:0.01:0.2;
