@@ -84,7 +84,7 @@ classdef rover_sysid_class < handle
                 get_trajectories_from_tracking_data(obj);
 
                 %% Fit Bezier Curve 
-                fit_bezier_to_trajectories(obj);
+                obj.fit_bezier_to_trajectories_lena();
 
                 %% Filter Udot values that don't look good
 %                 filter_u_based_on_udot(obj);
@@ -133,7 +133,7 @@ classdef rover_sysid_class < handle
                 obj.wheel_encoder.encoder_position = cell2mat(cellfun(@(s)s.Position,msgStructs,'uni',0));
                 
                 obj.wheel_encoder.encoder_velocity = (diff(obj.wheel_encoder.encoder_position)./diff(obj.wheel_encoder.time));
-                obj.wheel_encoder.encoder_velocity  = -obj.wheel_encoder.encoder_velocity*2*pi/(4096);
+                obj.wheel_encoder.encoder_velocity  = obj.wheel_encoder.encoder_velocity;
                 obj.wheel_encoder.encoder_velocity = smoothdata(obj.wheel_encoder.encoder_velocity, 'gaussian', 20);
                 obj.wheel_encoder.encoder_position = obj.wheel_encoder.encoder_position(1:end-1);
                 obj.wheel_encoder.time = obj.wheel_encoder.time(1:end-1);
@@ -297,62 +297,134 @@ classdef rover_sysid_class < handle
                disp([numOfTrajectories, " trajectories were detected"]);
            end
 
-           function obj = fit_bezier_to_trajectories(obj)
+           function obj = fit_bezier_to_trajectories_lena(obj)
                for i = 1:length(obj.trajectories)
                    %% Load variables in x, y, time for bezier curve fitting
                    x = obj.trajectories(i).x;
                    y = obj.trajectories(i).y;
+                   h = obj.trajectories(i).h;
                    encoder_position = obj.trajectories(i).encoder_position;
                    time = obj.trajectories(i).time;
-
-                   %% Fit Bezier curves on (time, x), (time, y), (x, y), (vx, vy), (time, encoder_position)
-
-                   [fitted_x, fx, vx_global, ax_global] =    fit_bezier_curve(obj, time, x);
-                   [fitted_y, fy, vy_global, ay_global] =    fit_bezier_curve(obj, time, y);
-                   [fitted_y_over_x, f_x, slope_of_f_x, d2_f_x] =    fit_bezier_curve(obj, fitted_x, fitted_y);
-                   [fitted_vy_over_vx, f_vx, slope_of_f_vx, d2_f_vx] =    fit_bezier_curve(obj, vx_global, vy_global);
-                   [fitted_encoder_position, f_encoder_position, encoder_velocity, enocoder_acc] =    fit_bezier_curve(obj, time, encoder_position);
-                   
-
-                   %% Get magnitude of v_global and a_global
-                   v_global = sqrt(vx_global.^2 + vy_global.^2);
-                   a_global = sqrt(ax_global.^2 + ay_global.^2);
-
-                   %% Find theta of vectors from the atan(y/x)                   
-                   theta_v_global = atan(vy_global./vx_global);
-                   theta_a_global = atan(ay_global./ax_global);
-
-                   %% Get theta from the slope of fitted function                   
-                   theta_over_f_x = atan(slope_of_f_x);
-                   theta_over_f_vx = atan(slope_of_f_vx);
-
-                   %% Get Longitdunal and Lateral componenets of the vectors
-
-                   v_longitudnal = cos(theta_v_global - theta_over_f_x) .* v_global;
-                   v_lateral = sin(theta_v_global - theta_over_f_x) .* v_global;
-
-                   a_longitudnal = cos(theta_a_global - theta_over_f_x) .* a_global;
-                   a_lateral = sin(theta_a_global - theta_over_f_x) .* a_global;
-
-                   %% Save the values in the trajectories struct
-
-                   obj.trajectories(i).fitted_x = fitted_x;
-                   obj.trajectories(i).u = v_longitudnal;
-                   obj.trajectories(i).udot = a_longitudnal;
-
-                   obj.trajectories(i).fitted_y = fitted_y;
-                   obj.trajectories(i).v = v_lateral;
-                   obj.trajectories(i).vdot = a_lateral;
-
-                   [fitted_theta, ftheta, yaw_global, yawdotglobal] = fit_bezier_curve(obj, time, theta_over_f_x);
-
-                   obj.trajectories(i).fitted_theta = fitted_theta;
-                   obj.trajectories(i).r = yaw_global;
-                   obj.trajectories(i).rdot = yawdotglobal;
-
-                   obj.trajectories(i).encoder_position = fitted_encoder_position;
-                   obj.trajectories(i).encoder_velocity = -encoder_velocity*2*pi/(4096);
+                   [x, y, h, u, v, r, udot, vdot, rdot, w] = obj.fit_bezier_to_data(time, x, y, h, encoder_position);
+                   %% Save the values into the trajectories struct
+                   obj.trajectories(i).x = x;
+                   obj.trajectories(i).y = y;
+                   obj.trajectories(i).h = h;
+                   obj.trajectories(i).u = u;
+                   obj.trajectories(i).v = v;
+                   obj.trajectories(i).r = r;
+                   obj.trajectories(i).udot = udot;
+                   obj.trajectories(i).vdot = vdot;
+                   obj.trajectories(i).rdot = rdot;
+                   obj.trajectories(i).encoder_velocity = w;
                end
+           end
+
+           function [syms_equation] = bezier_fit_unsmoothed_to_syms(obj, time, unsmoothed_variable)
+               % Takes in unsmoothed x, y, h, or w, and a normalized time. Returns a MATLAB
+               % function that can be used to find the smoothed values at
+               % some time using syms_equation(time). NOTE: time must be
+               % normalized aka [0,1]
+
+               % define the first point
+               unsmoothed_variable_0 = unsmoothed_variable(1);
+    
+               % Define the last point (meaning last point of the time array)
+               unsmoothed_variable_1 = unsmoothed_variable(end);
+    
+               % Solve
+               b = [unsmoothed_variable_0; unsmoothed_variable_1];
+               syms t;
+               A_1 = @(t)[(1-t).^5; 5.*t.*(1-t).^4; 10.*(t.^2).*(1-t).^3; 10.*(t.^3).*(1-t).^2; 5.*(t.^4).*(1-t).^1; t.^5];
+               A_2 = diff(A_1, t);
+               A_2 = matlabFunction(A_2);
+               A = [A_1(0), A_1(1)]';
+               
+               x0 = [1, 1, 1, 1, 1, 1];
+               A_points = A_1(time);
+               f = @(x) norm(A_points'*[x(1); x(2); x(3); x(4); x(5); x(6)]-unsmoothed_variable');
+               P=fmincon(f, x0, [], [], A, b);
+               % Return the equation
+               syms_equation = sym(A_1)'*P';
+           end
+
+           function syms_derivative_equation = bezier_derivative_syms(obj, syms_equation, time_range)
+               % Takes in a symbolic equation and returns the symbolic
+               % equation for its derivative. Note that for syms_equation
+               % and syms_derivative_equation, the inputs to these
+               % functions must be normalized
+               syms t;
+               syms_derivative_equation = diff(syms_equation, t)/time_range;
+           end
+
+           function [syms_u, syms_v, syms_r] = bezier_rotate_syms(obj, syms_xdot, syms_ydot, syms_hdot, syms_h)
+               % Takes in symbolic equations for xdot, ydot, and hdot.
+               % Returns symbolic equations for u, v, and r. Note that for
+               % all of the symbolic equations, the inputs to these
+               % functions must be normalized
+               
+               % Solve for equations
+               syms_u = syms_xdot.*cos(syms_h) + syms_ydot.*sin(syms_h);
+               syms_v = -syms_xdot.*sin(syms_h) + syms_ydot.*cos(syms_h);
+               syms_r = syms_hdot;
+
+           end
+
+           function [x,y,h,u,v,r,udot,vdot,rdot,w] = fit_bezier_to_data(obj, time, x, y, h, encoder_position)
+               % Uses bezier_fit_unsmoothed_to_syms, 
+               % syms_derivative_equation_syms, and bezier_rotate_syms. 
+               % Takes in unsmoothed x, y, h, and w data and sets the 
+               % obj.trajectories x, y, h, u, v, r, udot, vdot, rdot, and 
+               % w to their smoothed values. 
+               
+               % Normalize the time
+
+               time_range = time(end)-time(1);
+               time_normal = (time-time(1))./time_range;
+
+               % Smooth the data
+               syms_x = obj.bezier_fit_unsmoothed_to_syms(time_normal, x);
+               syms_y = obj.bezier_fit_unsmoothed_to_syms(time_normal, y);
+               syms_h = obj.bezier_fit_unsmoothed_to_syms(time_normal, h);
+               syms_w = obj.bezier_fit_unsmoothed_to_syms(time_normal, encoder_position);
+               
+               % Calculate the derivatives
+               syms_xdot = obj.bezier_derivative_syms(syms_x, time_range);
+               syms_ydot = obj.bezier_derivative_syms(syms_y, time_range);
+               syms_hdot = obj.bezier_derivative_syms(syms_h, time_range);
+
+               % Calculate u, v, and r
+               [syms_u, syms_v, syms_r] = obj.bezier_rotate_syms(syms_xdot, syms_ydot, syms_hdot, syms_h);
+
+               % Calculate the derivatives
+               syms_udot = obj.bezier_derivative_syms(syms_u, time_range);
+               syms_vdot = obj.bezier_derivative_syms(syms_v, time_range);
+               syms_rdot = obj.bezier_derivative_syms(syms_r, time_range);
+
+               % Convert the syms equations to MATLAB equations
+               func_x = matlabFunction(syms_x);
+               func_y = matlabFunction(syms_y);
+               func_h = matlabFunction(syms_h);
+               func_u = matlabFunction(syms_u);
+               func_v = matlabFunction(syms_v);
+               func_r = matlabFunction(syms_r);
+               func_udot = matlabFunction(syms_udot);
+               func_vdot = matlabFunction(syms_vdot);
+               func_rdot = matlabFunction(syms_rdot);
+               func_w = matlabFunction(syms_w);
+
+               % Calculate the values. Note: w must be multiplied by a 
+               % constant because of the encoder bits
+               x = func_x(time_normal);
+               y = func_y(time_normal);
+               h = func_h(time_normal);
+               u = func_u(time_normal);
+               v = func_v(time_normal);
+               r = func_r(time_normal);
+               udot = func_udot(time_normal);
+               vdot = func_vdot(time_normal);
+               rdot = func_rdot(time_normal);
+               w = func_w(time_normal).*-2*pi/(4096);
            end
 
            function [fitted_y, f_of_x, first_derivative, second_derivative] =   fit_bezier_curve(obj, x, y)

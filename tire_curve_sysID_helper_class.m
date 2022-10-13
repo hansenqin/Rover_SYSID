@@ -173,7 +173,7 @@ classdef tire_curve_sysID_helper_class < handle
            
                   
            function auto_filter(obj, structs)
-               % Only keeps the data from the automatic driving mode insteadvehicle_states
+               % Only keeps the data from the automatic driving mode instead
                % of manual driving
                for i = 1:length(structs) 
                     field_names = fieldnames(obj.(structs(i)));
