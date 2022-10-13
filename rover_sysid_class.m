@@ -133,7 +133,6 @@ classdef rover_sysid_class < handle
                 obj.wheel_encoder.encoder_position = cell2mat(cellfun(@(s)s.Position,msgStructs,'uni',0));
                 
                 obj.wheel_encoder.encoder_velocity = (diff(obj.wheel_encoder.encoder_position)./diff(obj.wheel_encoder.time));
-                obj.wheel_encoder.encoder_velocity  = obj.wheel_encoder.encoder_velocity;
                 obj.wheel_encoder.encoder_velocity = smoothdata(obj.wheel_encoder.encoder_velocity, 'gaussian', 20);
                 obj.wheel_encoder.encoder_position = obj.wheel_encoder.encoder_position(1:end-1);
                 obj.wheel_encoder.time = obj.wheel_encoder.time(1:end-1);
@@ -303,7 +302,9 @@ classdef rover_sysid_class < handle
                    x = obj.trajectories(i).x;
                    y = obj.trajectories(i).y;
                    h = obj.trajectories(i).h;
-                   encoder_position = obj.trajectories(i).encoder_position;
+                   % We can assume the encoder starts at 0 because only the
+                   % velocity is useful
+                   encoder_position = obj.trajectories(i).encoder_position-obj.trajectories(i).encoder_position(1);
                    time = obj.trajectories(i).time;
                    [x, y, h, u, v, r, udot, vdot, rdot, w] = obj.fit_bezier_to_data(time, x, y, h, encoder_position);
                    %% Save the values into the trajectories struct
@@ -386,12 +387,13 @@ classdef rover_sysid_class < handle
                syms_x = obj.bezier_fit_unsmoothed_to_syms(time_normal, x);
                syms_y = obj.bezier_fit_unsmoothed_to_syms(time_normal, y);
                syms_h = obj.bezier_fit_unsmoothed_to_syms(time_normal, h);
-               syms_w = obj.bezier_fit_unsmoothed_to_syms(time_normal, encoder_position);
+               syms_encoder_position = obj.bezier_fit_unsmoothed_to_syms(time_normal, encoder_position);
                
                % Calculate the derivatives
                syms_xdot = obj.bezier_derivative_syms(syms_x, time_range);
                syms_ydot = obj.bezier_derivative_syms(syms_y, time_range);
                syms_hdot = obj.bezier_derivative_syms(syms_h, time_range);
+               syms_encoder_velocity = obj.bezier_derivative_syms(syms_encoder_position, time_range);
 
                % Calculate u, v, and r
                [syms_u, syms_v, syms_r] = obj.bezier_rotate_syms(syms_xdot, syms_ydot, syms_hdot, syms_h);
@@ -411,7 +413,7 @@ classdef rover_sysid_class < handle
                func_udot = matlabFunction(syms_udot);
                func_vdot = matlabFunction(syms_vdot);
                func_rdot = matlabFunction(syms_rdot);
-               func_w = matlabFunction(syms_w);
+               func_encoder_velocity = matlabFunction(syms_encoder_velocity);
 
                % Calculate the values. Note: w must be multiplied by a 
                % constant because of the encoder bits
@@ -424,7 +426,7 @@ classdef rover_sysid_class < handle
                udot = func_udot(time_normal);
                vdot = func_vdot(time_normal);
                rdot = func_rdot(time_normal);
-               w = func_w(time_normal).*-2*pi/(4096);
+               w = func_encoder_velocity(time_normal).*-2*pi/(4096);
            end
 
            function [fitted_y, f_of_x, first_derivative, second_derivative] =   fit_bezier_curve(obj, x, y)
