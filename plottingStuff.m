@@ -13,29 +13,29 @@ plot(sysID.vehicle_states_from_mocap.time, sysID.vehicle_states_from_mocap.x - s
 
 %% Plotting u vs u form encoders
 
-for idx = 1:3
+% for idx = 1:3
     figure
     hold on;
 %   
-% idx = 5;
-plot(  sysID.trajectories(idx).time,   sysID.trajectories(idx).fitted_x, '-k', 'DisplayName','Mocap Fitted X (m)');    
-plot(  sysID.trajectories(idx).time,   sysID.trajectories(idx).x, 'g', 'DisplayName','Mocap X (m)');    
+idx = 1;
+% plot(  sysID.trajectories(idx).time,   sysID.trajectories(idx).fitted_x, '-k', 'DisplayName','Mocap Fitted X (m)');    
+% plot(  sysID.trajectories(idx).time,   sysID.trajectories(idx).x, 'g', 'DisplayName','Mocap X (m)');    
 plot(  sysID.trajectories(idx).time,   sysID.trajectories(idx).u, 'r', 'DisplayName','Mocap Longitudinal Velocity (m/s)');
     plot(  sysID.trajectories(idx).time,   sysID.trajectories(idx).encoder_velocity*  sysID.rw, 'b', 'DisplayName','Wheel Longitudnal Velocity (m/s)');
-%     plot( sysID.trajectories(idx).time, sysID.trajectories(idx),numerical_diff_encoder_velocity *  sysID.rw, 'g', 'DisplayName','Numerical Differentiated Wheel Longitudnal Velocity (m/s)' )
+    plot( sysID.trajectories(idx).time, sysID.trajectories(idx).numerical_diff_encoder_velocity *  sysID.rw, 'g', 'DisplayName','Numerical Differentiated Wheel Longitudnal Velocity (m/s)' )
     plot(  sysID.trajectories(idx).time,   sysID.trajectories(idx).udot, 'k', 'DisplayName','Mocap Longitudinal Acceleration (m/s^2)');
     title("Trajectory " + idx)
     xlabel("Time");
     legend;
     hold off;
-end
+% end
 
 %% Plotting num_diff u vs bezier u form encoders
 
-for idx = 1:20
+for idx = 1:1
     figure
     hold on;
-plot(  sysID.trajectories(idx).time,   sysID.trajectories(idx).num_diff_u, 'g', 'DisplayName','Mocap Num Diff U (m/s)');    
+% plot(  sysID.trajectories(idx).time,   sysID.trajectories(idx).num_diff_u, 'g', 'DisplayName','Mocap Num Diff U (m/s)');    
 plot(  sysID.trajectories(idx).time,   sysID.trajectories(idx).u, 'r', 'DisplayName','Mocap Longitudinal Velocity (m/s)');
     plot(  sysID.trajectories(idx).time,   sysID.trajectories(idx).encoder_velocity*  sysID.rw, 'b', 'DisplayName','Wheel Longitudnal Velocity (m/s)');
 %     plot( sysID.trajectories(idx).time, sysID.trajectories(idx),numerical_diff_encoder_velocity *  sysID.rw, 'g', 'DisplayName','Numerical Differentiated Wheel Longitudnal Velocity (m/s)' )

@@ -23,6 +23,9 @@ classdef rover_sysid_class < handle
         robot_frame         % Robot tracking frame eg. base_link
         bag                 % Input rosbags
 
+        lambdas             % Lambdas for all trajectories
+        F_xs                % F_xs for all trajectories
+
 
         %% Structs to store signals
         rover_debug_states_out = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0, 'w', 0, 'delta_cmd', 0);
@@ -30,9 +33,9 @@ classdef rover_sysid_class < handle
         wheel_encoder = struct('time', 0, 'encoder_position', 0, 'encoder_velocity', 0);
         vehicle_states_from_slam = struct('time', 0, 'x', 0, 'y', 0, 'h', 0);
         vehicle_states_from_mocap = struct('time', 0, 'x', 0, 'y', 0, 'h', 0);
-        trajectory = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'fitted_x', 0, 'fitted_y', 0, 'fitted_h', 0, ...
-                            'fitted_theta', 0, 'encoder_position', 0, 'delta_cmd', 0, 'num_diff_u', 0, 'num_diff_v', 0, ...
-                            'num_diff_r', 0, 'num_diff_encoder_velocity', 0, 'encoder_velocity', 0);
+        trajectory = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'fitted_x', 0, 'fitted_y', 0, ...
+                            'encoder_position', 0, 'delta_cmd', 0, 'num_diff_u', 0, 'num_diff_v', 0, ...
+                            'num_diff_r', 0, 'encoder_velocity', 0);
         trajectories = struct('trajectory', 0);
         bezier_curve = struct('time', 0, 'x', 0, 'y', 0, 'y_fitted_on_x', 0, 'dy_dx', 0, 'velocity_x_global', 0, ...
                                 'velocity_y_global', 0, 'velocity_longitudinal', 0, 'velocity_lateral', 0);
@@ -87,7 +90,7 @@ classdef rover_sysid_class < handle
                 fit_bezier_to_trajectories(obj);
 
                 %% Filter Udot values that don't look good
-%                 filter_u_based_on_udot(obj);
+                filter_u_based_on_udot(obj);
 
                 %% Combine all trajectories in one struct
                 combine_all_trajectories(obj);
@@ -134,7 +137,7 @@ classdef rover_sysid_class < handle
                 
                 obj.wheel_encoder.encoder_velocity = (diff(obj.wheel_encoder.encoder_position)./diff(obj.wheel_encoder.time));
                 obj.wheel_encoder.encoder_velocity  = -obj.wheel_encoder.encoder_velocity*2*pi/(4096);
-                obj.wheel_encoder.encoder_velocity = smoothdata(obj.wheel_encoder.encoder_velocity, 'gaussian', 20);
+%                 obj.wheel_encoder.encoder_velocity = smoothdata(obj.wheel_encoder.encoder_velocity, 'gaussian', 20);
                 obj.wheel_encoder.encoder_position = obj.wheel_encoder.encoder_position(1:end-1);
                 obj.wheel_encoder.time = obj.wheel_encoder.time(1:end-1);
            end
@@ -219,7 +222,7 @@ classdef rover_sysid_class < handle
                h = obj.vehicle_states_from_mocap.h;
                time = obj.vehicle_states_from_mocap.time;
                encoder_position = obj.wheel_encoder.encoder_position;
-               numerical_diff_encoder_velocity = obj.wheel_encoder.encoder_velocity;
+%                numerical_diff_encoder_velocity = obj.wheel_encoder.encoder_velocity;
                delta_cmd = obj.rover_debug_states_out.delta_cmd;
                u = [];
                v = [];
@@ -260,6 +263,7 @@ classdef rover_sysid_class < handle
                     u = u(filter);
                     v = v(filter);
                     r = r(filter);
+%                     numerical_diff_encoder_velocity = numerical_diff_encoder_velocity(filter);
                     encoder_position = encoder_position(filter);
                     delta_cmd = delta_cmd(filter);
                end
@@ -286,7 +290,7 @@ classdef rover_sysid_class < handle
                        obj.trajectory.num_diff_r = r(start_idx:end_idx)';
                        obj.trajectory.time =  time(start_idx:end_idx)';
                        obj.trajectory.encoder_position  = encoder_position (start_idx:end_idx)';
-                       obj.trajectory.numerical_diff_encoder_velocity  = numerical_diff_encoder_velocity (start_idx:end_idx)';
+%                        obj.trajectory.numerical_diff_encoder_velocity  = numerical_diff_encoder_velocity (start_idx:end_idx)';
                        obj.trajectory.delta_cmd = delta_cmd(start_idx:end_idx)';
                        obj.trajectories = [obj.trajectories, obj.trajectory];
                        numOfTrajectories = numOfTrajectories + 1;
@@ -304,6 +308,7 @@ classdef rover_sysid_class < handle
                    y = obj.trajectories(i).y;
                    encoder_position = obj.trajectories(i).encoder_position;
                    time = obj.trajectories(i).time;
+%                    num_diff_encoder_velocity = obj.trajectories(i).num_diff_encoder_velocity;
 
                    %% Fit Bezier curves on (time, x), (time, y), (x, y), (vx, vy), (time, encoder_position)
 
@@ -314,9 +319,12 @@ classdef rover_sysid_class < handle
                    [fitted_encoder_position, f_encoder_position, encoder_velocity, enocoder_acc] =    fit_bezier_curve(obj, time, encoder_position);
                    
 
+                   theta = atan2(fitted_y(end)-fitted_y(1), fitted_x(end)-fitted_x(1));
+                   Rot = [cos(theta),sin(theta);-sin(theta),cos(theta)];
+                   xy_local = Rot * ([fitted_x(:)'; fitted_y(:)'] - [fitted_x(1);fitted_y(1)]);
                    %% Get magnitude of v_global and a_global
-                   v_global = sqrt(vx_global.^2 + vy_global.^2);
-                   a_global = sqrt(ax_global.^2 + ay_global.^2);
+%                    v_global = sqrt(vx_global.^2 + vy_global.^2);
+%                    a_global = sqrt(ax_global.^2 + ay_global.^2);
 
                    %% Find theta of vectors from the atan(y/x)                   
                    theta_v_global = atan(vy_global./vx_global);
@@ -324,34 +332,44 @@ classdef rover_sysid_class < handle
 
                    %% Get theta from the slope of fitted function                   
                    theta_over_f_x = atan(slope_of_f_x);
-                   theta_over_f_vx = atan(slope_of_f_vx);
+                   v_loc = [vx_global;vx_global];
+                   a_loc = [vx_global;vx_global];
+                   dthv = theta_over_f_x + theta_v_global*0;
+                   dtha = theta_over_f_x + theta_a_global*0;
+                   
+                   for j = 1:length(ax_global)
+                       v_loc(:,j) = [cos(dthv(j)),sin(dthv(j));-sin(dthv(j)),cos(dthv(j))] * [vx_global(j); vy_global(j)];
+                       a_loc(:,j) = [cos(dtha(j)),sin(dtha(j));-sin(dtha(j)),cos(dtha(j))] * [ax_global(j); ay_global(j)];
+                   end
 
-                   %% Get Longitdunal and Lateral componenets of the vectors
+                   %% WRONG NEED TO CHANGE TO RIGID BODY TRANSFORM Get Longitdunal and Lateral componenets of the vectors
+        
 
-                   v_longitudnal = cos(theta_v_global - theta_over_f_x) .* v_global;
-                   v_lateral = sin(theta_v_global - theta_over_f_x) .* v_global;
-
-                   a_longitudnal = cos(theta_a_global - theta_over_f_x) .* a_global;
-                   a_lateral = sin(theta_a_global - theta_over_f_x) .* a_global;
+%                    v_longitudnal = cos(theta_v_global - theta_over_f_x) .* v_global;
+%                    v_lateral = sin(theta_v_global - theta_over_f_x) .* v_global;
+% 
+%                    a_longitudnal = cos(theta_a_global - theta_over_f_x) .* a_global;
+%                    a_lateral = sin(theta_a_global - theta_over_f_x) .* a_global;
 
                    %% Save the values in the trajectories struct
 
                    obj.trajectories(i).fitted_x = fitted_x;
-                   obj.trajectories(i).u = v_longitudnal;
-                   obj.trajectories(i).udot = a_longitudnal;
+                   obj.trajectories(i).u = v_loc(1, :);
+                   obj.trajectories(i).udot = a_loc(1, :);
 
                    obj.trajectories(i).fitted_y = fitted_y;
-                   obj.trajectories(i).v = v_lateral;
-                   obj.trajectories(i).vdot = a_lateral;
+                   obj.trajectories(i).v = v_loc(2, :);
+                   obj.trajectories(i).vdot = a_loc(2, :);
 
                    [fitted_theta, ftheta, yaw_global, yawdotglobal] = fit_bezier_curve(obj, time, theta_over_f_x);
 
-                   obj.trajectories(i).fitted_theta = fitted_theta;
+%                    obj.trajectories(i).fitted_h = fitted_theta;
                    obj.trajectories(i).r = yaw_global;
                    obj.trajectories(i).rdot = yawdotglobal;
 
                    obj.trajectories(i).encoder_position = fitted_encoder_position;
                    obj.trajectories(i).encoder_velocity = -encoder_velocity*2*pi/(4096);
+%                    obj.trajectories(i).num_diff_encoder_velocity = num_diff_encoder_velocity;
                end
            end
 
@@ -396,68 +414,6 @@ classdef rover_sysid_class < handle
                second_derivative = acceleration(time);
            
            end
-
-               
-%                for j = 1:length(tracking)
-%                    a = obj.trajectories(i).(tracking(j));
-%                    time = obj.trajectories(i).time;
-%                    time_original = time;
-%                    time_range = time(end)-time(1);
-%                    time = (time-time(1))./time_range;
-%         
-%                    % define the first point
-%                    ad_0 = a(1);
-%         
-%                    % Define the last point (meaning last point of the time array)
-%                    a_1 = a(end);
-%         
-%                    % Solve
-%                    b = [ad_0; a_1];
-%                    syms t;
-%                    A_1 = @(t)[(1-t).^5; 5.*t.*(1-t).^4; 10.*(t.^2).*(1-t).^3; 10.*(t.^3).*(1-t).^2; 5.*(t.^4).*(1-t).^1; t.^5];
-%                    A_2 = diff(A_1, t);
-%                    A_2 = matlabFunction(A_2);
-%                    A = [A_1(0), A_1(1)]';
-%                    
-%                    x0 = [1, 1, 1, 1, 1, 1];
-%                    A_points = A_1(time);
-%                    f = @(x) norm(A_points'*[x(1); x(2); x(3); x(4); x(5); x(6)]-a');
-%                    P=fmincon(f, x0, [], [], A, b);
-%                   
-%                    y = sym(A_1)'*P';
-%                    y = matlabFunction(y);
-%         
-%                    y = y(time);
-%                    
-%                    diff_bez_norm = sym(A_2)'*P';
-%                    diff_time = 1/time_range;
-%                    velocity = diff_bez_norm * diff_time;
-%                    acceleration = diff(velocity, t)/time_range;
-%                    velocity = matlabFunction(velocity);
-%                    acceleration = matlabFunction(acceleration);
-%                    velocity = velocity(time);
-%                    acceleration = acceleration(time);
-%                    if tracking(j) == "x"
-%                         obj.trajectories(i).fitted_x = y;
-%                         obj.trajectories(i).u = velocity;
-%                         obj.trajectories(i).udot = acceleration;
-%                    elseif tracking(j) == "y"
-%                        obj.trajectories(i).fitted_y = y;
-%                        obj.trajectories(i).v = velocity;
-%                        obj.trajectories(i).vdot = acceleration;
-%                    elseif tracking(j) == "h"
-%                        obj.trajectories(i).fitted_h = y;
-%                        obj.trajectories(i).r = velocity;
-%                        obj.trajectories(i).rdot = acceleration;
-%                    else
-%                        obj.trajectories(i).encoder_position = y;
-%                        obj.trajectories(i).encoder_velocity = -velocity*2*pi/(4096);
-%                    end
-%                    
-%                    time = time_original;
-%                end
-%             end
-%         end
           
     
        function plot_tracking_data(obj)
@@ -507,6 +463,7 @@ classdef rover_sysid_class < handle
     
     
        function [xLinearCoef, lambda, F_x] = get_longitudnal_tire_curve_coefficients(obj)
+            %% Loading data
             time = obj.trajectory.time;
             x = obj.trajectory.x;
             y = obj.trajectory.y;
@@ -517,11 +474,10 @@ classdef rover_sysid_class < handle
             udot = obj.trajectory.udot;
             vdot = obj.trajectory.vdot;
             rdot = obj.trajectory.rdot;
-            
             w = obj.trajectory.encoder_velocity;
             delta = obj.trajectory.delta_cmd;
   
-            % Calculate the slip ratio
+            %% Calculate the slip ratio
             lambda = [];
             lambda_numerator = obj.rw.*w-u;
             for i = 1:length(udot)
@@ -534,28 +490,57 @@ classdef rover_sysid_class < handle
             % Find longitudinal force: wheel encoder method
             F_x = obj.m.*(udot-v.*r);
 
+            %% Filter F_x and lambdas to remove noise
+            lambda = -lambda;
+            removeNoise = true;
+            if (removeNoise)
+                filter_top_left = ((lambda <= -0.2) & (F_x >= -6.6)) | ((lambda <= -0.18) & (F_x >= -5.85)) ...
+                               | ((lambda <= -0.13) & (F_x >= -4.3)) | ((lambda <= -0.11) & (F_x >= -3.16)) ...
+                               | ((lambda <= -0.07) & (F_x >= -0.34)) | ((lambda <= 0.0) & (F_x >= 6.8)) ;
+                filter_top = (F_x >= 8.2);
+                filter_bottom = (F_x <= -9.6);
+                filter_bottom_left = ((lambda <= -0.2) & (F_x <= -9.6)) | ((lambda <= -0.14) & (F_x <= -10)) ...
+                                | ((lambda >= -0.18) & (lambda <= -0.08) & (F_x <= -7.26)) ;
+                filter_bottom_right = ((lambda >= 0.0) & (F_x <= 2.7)) | ((lambda >= 0.0) & (F_x <= 4.13)) ... 
+                                | ((lambda >= -0.13) & (lambda <= -0.07) & (F_x <= -5.9)) ;
+                filter_top_right = ((lambda >= 0.015) & (F_x <= 5.32));
+%                 filter_center = ((lambda >= -0.05) & (lambda <= 0) & (F_x <= 0)) ;
+%                 filter_right_circle = sqrt((lambda - 0.11).^2 + (F_x + 2.86).^2) <= 0.2;
+                filter_center_line = ((lambda >= -0.15) & (lambda <= 0.02) & (F_x <= 64 * lambda + 2.5)) ;
+                filter = filter_center_line | filter_top_left | filter_top | filter_bottom_left | filter_bottom | filter_bottom_right | filter_top_right ;
+                filter = ~filter;
+                lambda = lambda(filter);
+                F_x = F_x(filter);
+                
+                lambda = lambda + 0.055;
+            end
+            
             % Select and fit a curve to the data in the linear region 
-            lambdaSelected = lambda(abs(lambda)<0.01);
-            F_xSelected = F_x(abs(lambda)<0.01);
+            threshold = 0.03;
+            lambdaSelected = lambda(abs(lambda) < threshold);
+            F_xSelected = F_x(abs(lambda) < threshold);
             
             % Longitudinal linear curve through (0,0) using fmincon
             x0 = 10;
             f = @(x) norm(obj.m.*obj.g.*lambdaSelected'.*x - F_xSelected);
             xLinearCoef = fmincon(f,x0);
+            
        end
     
        function plot_longitudnal_linear_tire_curve(obj, xLinearCoef, lambda, F_x)
             % Longitudinal
             close all;
             figure(1);
-            scatter(-lambda, F_x);
             hold on;
-            xLinear = @(t) obj.m*obj.g*obj.lf*xLinearCoef(1)*t/(obj.lf+obj.lr);
+            fxvslambda = scatter(lambda, F_x);
+            fxvslambda.Annotation.LegendInformation.IconDisplayStyle = 'off';
+            xLinear = @(t) obj.m*obj.g*xLinearCoef(1)*t;
             t = -0.2:0.01:0.2;
-            plot(t, xLinear(t), "LineWidth", 2);
-            xlabel("Front Slip Ratio");
-            ylabel("Front Longitudinal Tire Force (N)");
+%             plot(t, xLinear(t), "LineWidth", 2, 'DisplayName', "Slope of Surface Adhesion Coefficient");
+            xlabel("Slip Ratio");
+            ylabel("Longitudinal Tire Force (N)");
             xlim([-0.5,0.5]);
+%             legend;
             ylim([-15 15]);
             hold off;
        end
@@ -605,10 +590,11 @@ classdef rover_sysid_class < handle
         
         function obj = filter_u_based_on_udot(obj)
             for i = 1:length(obj.trajectories)
-               removeNegativeUDotFilterValue = 0;
-                condition_1 = (obj.trajectories(i).udot > removeNegativeUDotFilterValue) & (obj.trajectories(i).encoder_velocity * obj.rw > obj.trajectories(i).u); 
-                condition_2 = (obj.trajectories(i).udot < removeNegativeUDotFilterValue) & (obj.trajectories(i).encoder_velocity * obj.rw < obj.trajectories(i).u); 
-                filter = condition_1 | condition_2;
+               threshold = 1;
+               filter = abs(obj.trajectories(i).u - obj.trajectories(i).encoder_velocity * obj.rw) < threshold;    
+%                 condition_1 = (obj.trajectories(i).udot > removeNegativeUDotFilterValue) & (obj.trajectories(i).encoder_velocity * obj.rw > obj.trajectories(i).u); 
+%                 condition_2 = (obj.trajectories(i).udot < removeNegativeUDotFilterValue) & (obj.trajectories(i).encoder_velocity * obj.rw < obj.trajectories(i).u); 
+%                 filter = condition_1 | condition_2;
                 field_names = fieldnames(obj.trajectories(i));
                 for j = 1:length(field_names)
                     obj.trajectories(i).(field_names{j}) = obj.trajectories(i).(field_names{j})(filter);                

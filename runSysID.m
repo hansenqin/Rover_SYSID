@@ -3,7 +3,10 @@
 % sysID.plot_linear_tire_curve(xLinearCoef, fLinearCoef, rLinearCoef, lambda, alphaf, alphar, F_x, F_yf, F_yr);
 
 %% Run Longitudnal Sysid
-% sysID = rover_sysid_class('mocap_longitudnal_10_09.bag', 'velodyne_rover.json', 0);
+sysID = rover_sysid_class('mocap_longitudnal_10_09.bag', 'velodyne_rover.json', 0);
 close all;
+
+%%
+
 [xLinearCoef, lambda, F_x] = sysID.get_longitudnal_tire_curve_coefficients();
 sysID.plot_longitudnal_linear_tire_curve(xLinearCoef, lambda, F_x);
