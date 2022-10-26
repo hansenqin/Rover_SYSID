@@ -1,20 +1,4 @@
-classdef rover_sysid_class < handle
-    %{
-    Authors: Hansen Qin, Lena Trang, Vishrut Kaushik
-    Email: qinh@umich.edu
-    Created: 5/17/2022
-    Modified: 10/13/2022
-    
-    Purpose: Solve for the longitudinal and lateral tire characetristic 
-             curve coefficients given a ros obj.bag with vehicle states 
-             and vehicle commands.
-             The longitudindal tire characterisitc curve is in the form:
-             F_xf = F_xr = m*g*lambda*C1
-             The lateral tire characterisitc curve is in the form:
-             F_yf = C1*alpha_f
-             F_yr = C2*alpha_r
-    %}
-    
+classdef rover_longitudinal_sysid_class < handle
    
     properties
         %% Vehicle constants 
@@ -53,7 +37,7 @@ classdef rover_sysid_class < handle
    end
    
    methods
-           function obj = rover_sysid_class(bag_name, rover_config, varargin)
+           function obj = rover_longitudinal_sysid_class(bag_name, rover_config, varargin)
                 %% Load rosbag and vehicle constants from config json file
                 close all;
                 obj.bag = rosbag(bag_name);                                 % Read the bag

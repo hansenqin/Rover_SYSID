@@ -1,4 +1,4 @@
-bag_name = "sys_id_manual_driving_striaght_line_09_22.bag";
+bag_name = "mocap_lateral_10_09_2.bag";
 bag_file = rosbag(bag_name);
 num_topics = height(bag_file.AvailableTopics);
 publisher_map = containers.Map;
