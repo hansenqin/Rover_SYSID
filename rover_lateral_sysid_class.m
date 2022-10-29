@@ -2,35 +2,43 @@ classdef rover_lateral_sysid_class < handle
    
     properties
         %% Vehicle constants 
-        lf                                                                  % Distance between front axle and center of mass
-        lr                                                                  % Distance between rear axle and center of mass
-        m                                                                   % Mass 
-        Izz                                                                 % Moment of Inertia
-        servo_offset                                                        % Servo offset 
-        rw                                                                  % Wheel radius
-        g                                                                   % Gravity constant
-        robot_frame                                                         % Robot tracking frame eg. base_link
-        bag                                                                 % Input rosbags
-        bag_name                                                            % Bag name
+        lf                % Distance between front axle and center of mass
+        lr                % Distance between rear axle and center of mass
+        m                 % Mass 
+        Izz               % Moment of Inertia
+        servo_offset      % Servo offset 
+        rw                % Wheel radius
+        g                 % Gravity constant
+        robot_frame       % Robot tracking frame eg. base_link
+        bag               % Input rosbags
+        bag_name          % Bag name
 
         %% Signal standardization
         start_time_offset;                                                  % TODO: use this or delete it?
-        standard_time;                                                      %standard usd to synchronize all signals
+        standard_time;                                                      % standard usd to synchronize all signals
 
         %% Structs to store signals
-        rover_debug_states_out = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'u', 0, 'v', 0, 'r', 0, 'w', 0, 'delta_cmd', 0);
+        rover_debug_states_out = struct('time', 0, 'x', 0, 'y', 0, ...
+            'h', 0, 'u', 0, 'v', 0, 'r', 0, 'w', 0, 'delta_cmd', 0);
         desired_states = struct('time', 0, 'ud', 0, 'vd', 0, 'rd', 0);
-        wheel_encoder = struct('time', 0, 'encoder_position', 0, 'encoder_velocity', 0);
-        vehicle_states_from_slam = struct('time', 0, 'x', 0, 'y', 0, 'h', 0);
-        vehicle_states_from_mocap = struct('time', 0, 'x', 0, 'y', 0, 'h', 0);
+        wheel_encoder = ...
+            struct('time', 0, 'encoder_position', 0, 'encoder_velocity', 0);
+        vehicle_states_from_slam = ...
+            struct('time', 0, 'x', 0, 'y', 0, 'h', 0);
+        vehicle_states_from_mocap = ...
+            struct('time', 0, 'x', 0, 'y', 0, 'h', 0);
         vehicle_delta_command = struct('time', 0, 'delta_cmd', 0);
-        vehicle_motor_current_command = struct('time', 0, 'motor_current', 0);
-        trajectory = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, 'fitted_x', 0, 'fitted_y', 0, ...
-                            'encoder_position', 0, 'delta_cmd', 0, 'num_diff_u', 0, 'num_diff_v', 0, ...
-                            'num_diff_r', 0, 'encoder_velocity', 0);
+        vehicle_motor_current_command = ...
+            struct('time', 0, 'motor_current', 0);
+        trajectory = struct('time', 0, 'x', 0, 'y', 0, 'h', 0, ...
+            'fitted_x', 0, 'fitted_y', 0, 'encoder_position', 0, ...
+            'delta_cmd', 0, 'num_diff_u', 0, 'num_diff_v', 0, ...
+            'num_diff_r', 0, 'encoder_velocity', 0);
         trajectories = struct('trajectory', 0);
-        bezier_curve = struct('time', 0, 'x', 0, 'y', 0, 'y_fitted_on_x', 0, 'dy_dx', 0, 'velocity_x_global', 0, ...
-                                'velocity_y_global', 0, 'velocity_longitudinal', 0, 'velocity_lateral', 0);
+        bezier_curve = struct('time', 0, 'x', 0, 'y', 0, ...
+            'y_fitted_on_x', 0, 'dy_dx', 0, 'velocity_x_global', 0, ...
+            'velocity_y_global', 0, 'velocity_longitudinal', 0, ...
+            'velocity_lateral', 0);
         
         %% Stored for plotting
         lambdas             % Lambdas for all trajectories
@@ -38,49 +46,50 @@ classdef rover_lateral_sysid_class < handle
    end
    
    methods
+           %% Driver
            function obj = rover_lateral_sysid_class(bag_name, rover_config, varargin)
-                %% Load rosbag and vehicle constants from config json file
+                % Load rosbag and vehicle constants from config json file
                 close all;
                 obj.bag_name = bag_name;
                 obj.bag = rosbag(bag_name);                                 % Read the bag
                 rover_config = read_json(obj, rover_config);                % Read the json file with vehicle constants
                 set_vehicle_constants(obj, rover_config);                   % Set the constants given the rover configuration
                
-                %% Parse optional inputs
+                % Parse optional inputs
                 for i = 1:2:length(varargin)                                % Work for a list of name-value pairs
                     if ischar(varargin{i}) || isstring(varargin{i})         % Check if is character
                         obj.(varargin{i}) = varargin{i+1};                  % Override or add parameters to structure.
                     end
                 end
                 
-                %% Load data 
+                % Load data 
                 load_rover_debug_states(obj);
                 load_desired_states(obj);
                 load_wheel_encoder_data(obj);
                 load_vehicle_states_from_slam_data(obj);
                 load_vehicle_states_from_mocap_data(obj);
 
-                %% Sync Rate with specified struct
+                % Sync Rate with specified struct
                 std_time = obj.vehicle_states_from_mocap.time;
                 set_standard_time(obj, std_time);
                 structs_to_sync = ["wheel_encoder", "rover_debug_states_out"];
                 synchronize_signals_sample_rate(obj, structs_to_sync);
 
-                %% Seperate Trajectories
+                % Seperate Trajectories
                 get_trajectories_from_tracking_data(obj);
 
-                %% Fit Bezier Curve 
+                % Fit Bezier Curve 
                 fit_bezier_to_trajectories(obj);
 
-                %% Filter Udot values that don't look good
+                % Filter Udot values that don't look good
                 filter_u_based_on_udot(obj);
 
-                %% Combine all trajectories in one struct
+                % Combine all trajectories in one struct
                 combine_all_trajectories(obj);
                 
            end
            
-           % Load constants from json file
+           %% Load constants from json file
            function json = read_json(obj, fname)
                % Opens and reads the json file
                 fid = fopen(fname);
@@ -101,7 +110,7 @@ classdef rover_lateral_sysid_class < handle
                 obj.robot_frame = string(rover_config.robot_frame);   
            end
 
-           % Load data from bag
+           %% Load data from bag
            function obj = load_rover_debug_states(obj)
                % Loads states from state estimator: time, x, y, h, u, v, r, w,
                % delta_cmd
@@ -212,7 +221,7 @@ classdef rover_lateral_sysid_class < handle
                obj.vehicle_motor_current_command.motor_current = cell2mat(cellfun(@(s)s.State.CurrentMotor,msgStructs_motor_current,'uni',0));
            end
 
-           % Adjust the data to the standard time
+           %% Adjust the data to the standard time
            function obj = set_standard_time(obj, time)
                % Sets the time that all other structs will be synchonized
                % with
