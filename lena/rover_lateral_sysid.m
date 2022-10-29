@@ -65,20 +65,24 @@ classdef rover_lateral_sysid < handle
                     "vehicle_delta_command", obj.vehicle_delta_command, ...
                     "vehicle_motor_current_command", obj.vehicle_motor_current_command);
 
-                % Make all of the signals start at 1
+                % Make all of the signals start at 0
                 structs_to_sync = synchronize_signals_start_time(structs_to_sync);
 
                 % Remove sections where the h from mocap resets from +pi to
                 % -pi
-                
+                max_yaw = 3.1;
+                condition_mocap = abs(structs_to_sync.vehicle_states_from_mocap.h) < max_yaw;
+                structs_to_sync = remove_via_condition(structs_to_sync.vehicle_states_from_mocap, structs_to_sync, condition_mocap);
 
                 % Remove undesirable sections of the trajectory
                 minimum_u = 0.1;
                 structs_to_sync = remove_negative_u(structs_to_sync.vehicle_states_from_mocap, structs_to_sync, minimum_u);
-                structs_to_sync = remove_negative_encoder_velocity(structs_to_sync, minimum_u);
+                condition_encoder = structs_to_sync.wheel_encoder.encoder_velocity > minimum_u;
+                structs_to_sync = remove_via_condition(structs_to_sync.wheel_encoder, structs_to_sync, condition_encoder);
 
-
-                synchronize_signals_sample_rate(obj, structs_to_sync);
+                % Interpolate so that the time vectors match
+                reference_struct = structs_to_sync.vehicle_states_from_mocap;
+                structs_to_sync = synchronize_signals_sample_rate(reference_struct, structs_to_sync);
 
                 % Seperate Trajectories
 
@@ -157,8 +161,6 @@ classdef rover_lateral_sysid < handle
            end
            function obj = load_vehicle_states_from_mocap_data(obj)
                 % Loads states from mocap: time, x, y, h
-                
-                
 
                 bSel = select(obj.bag, 'Topic', '/mocap');
                 mocap = cell2mat(readMessages(bSel, 'DataFormat', 'struct'));
@@ -168,31 +170,20 @@ classdef rover_lateral_sysid < handle
                 y = zeros(length(mocap), 1);
                 h = zeros(length(mocap), 1);
 
-                roll = zeros(length(mocap), 1);
-                yaw = zeros(length(mocap), 1);
-
                 for i = 1:size(mocap)
                     x(i) = mocap(i).Pose.Position.X*1e-3;
                     y(i) = -mocap(i).Pose.Position.Z*1e-3;
                     time(i) = (cast(mocap(i, 1).Header.Stamp.Sec, 'double')*1e9 + cast(mocap(i, 1).Header.Stamp.Nsec, 'double'))*1e-9;
 
                     q = [mocap(i).Pose.Orientation.W, mocap(i).Pose.Orientation.X, mocap(i).Pose.Orientation.Y, mocap(i).Pose.Orientation.Z];
-%                     q = [mocap(i).Pose.Orientation.W,
-%                     mocap(i).Pose.Orientation.X,
-%                     mocap(i).Pose.Orientation.Y,
-%                     mocap(i).Pose.Orientation.Z]; lena's testing
-                    [z_, y_, x_] = quat2angle(q, 'XYZ');
+                    [x_, y_, z_] = quat2angle(q, 'XYZ');
                     h(i) = z_;  
-
-
-                    roll(i) = y_;
-                    yaw(i) = x_;
                 end
 
                 obj.vehicle_states_from_mocap.time = time;
                 obj.vehicle_states_from_mocap.x = x;
                 obj.vehicle_states_from_mocap.y = y;
-                obj.vehicle_states_from_mocap.h = h;
+                obj.vehicle_states_from_mocap.h = -h;
 
            end
            function obj = load_commands(obj)
@@ -211,38 +202,6 @@ classdef rover_lateral_sysid < handle
                obj.vehicle_delta_command.delta_cmd = -cell2mat(cellfun(@(s)s.Data,msgStructs_servo,'uni',0));
                obj.vehicle_motor_current_command.time = table2array(bSel_motor_current.MessageList(:,1));
                obj.vehicle_motor_current_command.motor_current = cell2mat(cellfun(@(s)s.State.CurrentMotor,msgStructs_motor_current,'uni',0));
-           end
-
-           %% Adjust the data to the standard time
-           function obj = set_standard_time(obj, time)
-               
-               % Sets the time that all other structs will be synchonized
-               % with
-               obj.standard_time = time;
-           end
-
-           function obj = synchronize_signals_sample_rate(obj, structs)
-               % Interpolates the given structs to be at the same time
-               % as the standard time. TODO: change this to be after the
-               % bezier fitting
-               for i = 1:length(structs)
-                    field_names = fieldnames(obj.(structs(i)));
-                    time = obj.(structs(i)).time;
-                    % TODO: change this to something else? because the time
-                    % vec may not always be the same
-                    time = time - time(1) + obj.standard_time(1);
-                    for j = 2:length(field_names)
-                        obj.(structs(i)).(field_names{j}) = interp1(time(:),obj.(structs(i)).(field_names{j}), obj.standard_time(:), 'linear', 'extrap'); 
-                    end
-                    obj.(structs(i)).time = obj.standard_time(:);
-                end
-           end
-
-           function remove_mocap_h_transitions(obj, struct)
-               % from 240 to 320
-                time_start = [0, 320, ];
-                time_end = [240,10000, ];
-                remove_time_interval([time_start, time_end], struct)
            end
 
            %% Bezier data fitting
