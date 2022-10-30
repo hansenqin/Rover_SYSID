@@ -1,20 +1,19 @@
 function [fLinearCoef, rLinearCoef, alphaf, alphar, F_yf, F_yr] = ...
-    compute_lateral_tire_curve_coefficients(rover_config, states)
+    compute_lateral_tire_curve_coefficients(rover_config, fitted_states)
     % Calculate the lateral tire coefficients for the front and rear tires.
     % Takes in a struct of rover_config (from the json file) and a struct
     % of the states (x, y, h, u, v, r, udot, vdot, rdot)
 
+    [lf, lr, m, Izz, servo_offset, rw, g, robot_frame] = load_rover_config_constants(rover_config);
+    [time, x, y, h, u, v, r, udot, vdot, rdot, delta_cmd] = load_states(fitted_states);
+
     % Find slip angles
-    alphaf = delta - (v + obj.lf.*r)./sqrt(u.^2+0.05);
-    alphar = -(v-obj.lr.*r)./sqrt(u.^2+0.05);
+    alphaf = delta_cmd - (v + lf.*r)./sqrt(u.^2+0.05);
+    alphar = -(v-lr.*r)./sqrt(u.^2+0.05);
     
     % Find lateral force
-    F_yf = (rover_config.lr.*rover_config.m.*(states.vdot+states.u.*...
-        states.r)+states.rdot.*rover_config.Izz)./(rover_config.lf + ...
-        rover_config.lr);
-    F_yr=(rover_config.m.*(states.vdot+states.u.*states.r)-states.rdot*...
-        rover_config.Izz./rover_config.lf)./(1+rover_config.lr./...
-        rover_config.lf);
+    F_yf = (lr.*m.*(vdot+u.*r)+rdot.*Izz)./(lf + lr);
+    F_yr=(m.*(vdot+u.*r)-rdot*Izz./lf)./(1+lr./lf);
 
     % Select and fit a curve to the data in the linear region 
     alphafSelected = alphaf(abs(alphaf)<0.2);

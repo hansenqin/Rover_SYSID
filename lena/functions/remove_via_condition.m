@@ -8,6 +8,6 @@ function structs = remove_via_condition(reference_struct, structs, condition)
    % Remove the time intervals
    for i=1:length(time_start)
        time_interval = [time_start(i), time_end(i)];
-       structs = remove_time_interval(time_interval, structs);
+       structs = remove_or_select_time_interval(time_interval, structs, 0);
    end
 end

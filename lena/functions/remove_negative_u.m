@@ -8,11 +8,10 @@ function structs = remove_negative_u(reference_struct, structs, minimum_u)
    % will give an acceptable approximation
    xdot = (diff(reference_struct.x)./diff(reference_struct.time))';
    ydot = (diff(reference_struct.y)./diff(reference_struct.time))';
-   h = zeros(1,length(reference_struct.h)-1);
-   for i=1:length(h)
-       h(i) = (reference_struct.h(i)+reference_struct.h(i+1))/2;
-   end
-   u = xdot.*cos(h) + ydot.*sin(h);
+   h = reference_struct.h(1:end-1)';
+%    for i = 1:length(h)
+%    u = norm(xdot(i).*cos(h(i)), ydot(i).*sin(h(i)));
+%    end
    u(end+1) = u(end); % Match the vector size
    
    % Find time intervals
@@ -22,6 +21,6 @@ function structs = remove_negative_u(reference_struct, structs, minimum_u)
    % Remove the time intervals
    for i=1:length(time_start)
        time_interval = [time_start(i), time_end(i)];
-       structs = remove_time_interval(time_interval, structs);
+       structs = remove_or_select_time_interval(time_interval, structs, 0);
    end
 end
