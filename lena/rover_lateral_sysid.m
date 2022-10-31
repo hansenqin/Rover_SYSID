@@ -44,7 +44,7 @@ classdef rover_lateral_sysid < handle
             'time', 0, 'x', 0, 'y', 0, 'h', 0, ...
             'u', 0, 'v', 0, 'r', 0, ...
             'udot', 0, 'vdot', 0, 'rdot', 0, ...
-            'delta_cmd', 0);                                                % TODO replace this with the trajectories struct? or maybe concanteate them here....
+            'delta_cmd', 0, 'trajectory', 0);                                              % TODO replace this with the trajectories struct? or maybe concanteate them here....
 
    end
    methods
@@ -130,9 +130,27 @@ classdef rover_lateral_sysid < handle
                 dt = 0.02;                           % [s], sampling rate
                 [time_start, time_end] = divide_into_time_intervals(reference_struct, min_time_between_intervals, min_time_interval_length, expected_num_traj, dt);
 %                 [time_start, time_end] = split_traj_from_h(reference_struct, expected_num_traj, min_time_interval_length, dt);
+
+                time_start_ = [];
+                time_end_ = [];
+
                 for i=1:length(time_start)
+                    if time_end(i) - time_start(i) > 0.5
+                        endpoints = time_start(i):0.5:time_end(i);
+                        for j=1:length(endpoints)-1
+                            time_start_=[time_start_, endpoints(j)];
+                            time_end_=[time_end_, endpoints(j+1)];
+                        end
+                    else
+                        time_start_ = [time_start_, time_start(i)];
+                        time_end_ = [time_end_, time_end(i)];
+                    end
+
+                end
+
+                for i=1:length(time_start_)
                     % Split the data
-                    temp_struct = remove_or_select_time_interval([time_start(i), time_end(i)], structs_to_sync, 1);
+                    temp_struct = remove_or_select_time_interval([time_start_(i), time_end_(i)], structs_to_sync, 1);
                     % Save the data in obj.trajectory
                     reference_struct = temp_struct.vehicle_states_from_mocap;
                     obj.trajectory = compile_position_state_vector(reference_struct, temp_struct, obj.trajectory);
@@ -142,13 +160,25 @@ classdef rover_lateral_sysid < handle
 
                 %% Fit Bezier Curve 
                 fit_trajectories(obj);
+                
+                for i1=1:length(obj.fitted_trajectories)
+                    field_names1 = fieldnames(obj.fitted_trajectories(i1));
+                    for j = 1:length(field_names1)
+                        obj.fitted_trajectories(i1).(field_names1{j}) = obj.fitted_trajectories(i1).(field_names1{j})(6:end-6);
+                    end
+                end
+
                 compile_fitted_trajectories(obj);
+
+                obj.fitted_states = limit_values(obj, "udot", obj.fitted_states, 10);
+                obj.fitted_states = limit_values(obj, "vdot", obj.fitted_states, 10);
+                obj.fitted_states = limit_values(obj, "rdot", obj.fitted_states, 10);
 
                 %% Plotting
                 [fLinearCoef, rLinearCoef, alphaf, alphar, F_yf, F_yr] ...
                     = compute_lateral_tire_curve_coefficients ...
                     (obj.rover_config, obj.fitted_states);
-                plot_lateral_linear_tire_curve(fLinearCoef, ...
+               plot_lateral_linear_tire_curve(fLinearCoef, ...
                     rLinearCoef, alphaf, alphar, F_yf, F_yr)
            end
            
@@ -228,28 +258,31 @@ classdef rover_lateral_sysid < handle
 
                 for i = 1:size(mocap)
                     x(i) = mocap(i).Pose.Position.X*1e-3;
-                    y(i) = mocap(i).Pose.Position.Z*1e-3;
+                    y(i) = -mocap(i).Pose.Position.Z*1e-3;
                     time(i) = (cast(mocap(i, 1).Header.Stamp.Sec, 'double')*1e9 + cast(mocap(i, 1).Header.Stamp.Nsec, 'double'))*1e-9;
 
                     q = [mocap(i).Pose.Orientation.W, mocap(i).Pose.Orientation.X, mocap(i).Pose.Orientation.Y, mocap(i).Pose.Orientation.Z];
                     % default = yaw, pitch, roll -> Y, Z, X
 
-                    [x_, y_, z_] = quat2angle(q, "XYZ");
-                    h(i) = y_;
+                    
+                    [x_, y_, z_] = quat2angle(q);
+%                     h(i) = x_;
 
 % We can assume that the quaternion points vertically
 % atan2 (2.0* (qy*qz + qw*qx), qw*qw - qx*qx - qy*qy + qz*qz)
 %                     q(2)=0; q(4)=0; mag = norm(q); q = q/mag;
 %                     h1(i) = 2*acos(q(1));
 
-                       h1(i) = atan2(2*q(1)*q(3), q(1)^2 - q(3)^2);
+                       h(i) = atan2(2*q(1)*q(3), q(1)^2 - q(3)^2);
+                    axang = quat2axang(q);
+%                     h(i) = axang(4);
                        
                 end
 
                 obj.vehicle_states_from_mocap.time = time;
                 obj.vehicle_states_from_mocap.x = smoothdata(x, 'gaussian',1);
                 obj.vehicle_states_from_mocap.y = smoothdata(y,'gaussian',1);
-                obj.vehicle_states_from_mocap.h = -h1;
+                obj.vehicle_states_from_mocap.h = h;
 
            end
            function obj = load_commands(obj)
@@ -285,6 +318,16 @@ classdef rover_lateral_sysid < handle
                 end
            end
 
+           function struct = limit_values(obj, reference_var, struct, max_magnitude)
+                condition = abs(struct.(reference_var)) < max_magnitude;
+                field_names = fieldnames(struct);
+                for i=1:length(field_names)
+                        if string(field_names{i})~='trajectory'
+                            struct.(field_names{i}) = struct.(field_names{i})(condition);
+                        end
+                end
+           end
+
            function compile_fitted_trajectories(obj)
                for i=1:length(obj.fitted_trajectories)
                     current_fit_traj = obj.fitted_trajectories(i);
@@ -300,6 +343,7 @@ classdef rover_lateral_sysid < handle
                     obj.fitted_states.udot = [obj.fitted_states.udot; udot];
                     obj.fitted_states.vdot = [obj.fitted_states.vdot; vdot];
                     obj.fitted_states.rdot = [obj.fitted_states.rdot; rdot];
+                    obj.fitted_states.trajectory = [obj.fitted_states.trajectory; zeros(length(time),1)+i];
                end
            end
 

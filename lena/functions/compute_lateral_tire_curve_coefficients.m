@@ -8,9 +8,10 @@ function [fLinearCoef, rLinearCoef, alphaf, alphar, F_yf, F_yr] = ...
     [time, x, y, h, u, v, r, udot, vdot, rdot, delta_cmd] = load_states(fitted_states);
 
     % Find slip angles
+
     alphaf = delta_cmd - (v + lf.*r)./sqrt(u.^2+0.05);
     alphar = -(v-lr.*r)./sqrt(u.^2+0.05);
-    
+
     % Find lateral force
     F_yf = (lr.*m.*(vdot+u.*r)+rdot.*Izz)./(lf + lr);
     F_yr=(m.*(vdot+u.*r)-rdot*Izz./lf)./(1+lr./lf);

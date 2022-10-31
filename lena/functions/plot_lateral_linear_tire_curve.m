@@ -9,21 +9,21 @@ function plot_single_lateral_linear_tire_curve(yLinearCoef, alpha, F_y, position
    % arguments. Note that for for front, position==1 and for rear,
    % position==0.
    if position % Front tire
-       figure(2);
+       figure(1);
        clf;
        xlabel("Front Slip Angle");
        ylabel("Front Lateral Tire Force (N)");
        title("Fywf="+round(yLinearCoef(1),2)+"*alpha_f")
    else % Rear tire
-       figure(3);
+       figure(2);
        clf;
        xlabel("Rear Slip Angle");
        ylabel("Rear Lateral Tire Force (N)");
        title("Fywr="+round(yLinearCoef(1),2)+"*alpha_r");
    end
    % Plot the data and the fitted curve
-   scatter(alpha, F_y);
    hold on;
+   scatter(alpha, F_y);
    yLinear = @(t) yLinearCoef(1)*t;
    t = -0.2:0.01:0.2;
    plot(t, yLinear(t), "LineWidth", 2);
