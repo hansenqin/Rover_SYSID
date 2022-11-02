@@ -4,8 +4,10 @@ function [x, y, h, u, v, r, udot, vdot, rdot, delta_cmd, xdot, ydot] = bezier_fi
        % Takes in unsmoothed x, y, h, and w data and sets the 
        % obj.trajectories x, y, h, u, v, r, udot, vdot, rdot, and 
        % w to their smoothed values. 
+       if ~isempty(time)
        
        % Normalize the time
+       plot(time(1:end-1), diff(x).*cos(h(1:end-1))./diff(time) + diff(y)./diff(time).*sin(h(1:end-1)));
        time_range = time(end)-time(1);
        time_normal = (time-time(1))./time_range;
 
@@ -13,6 +15,52 @@ function [x, y, h, u, v, r, udot, vdot, rdot, delta_cmd, xdot, ydot] = bezier_fi
        syms_x = bezier_fit_unsmoothed_to_syms(time_normal, x);
        syms_y = bezier_fit_unsmoothed_to_syms(time_normal, y);
        syms_h = bezier_fit_unsmoothed_to_syms(time_normal, h);
+
+
+        %% Polar Calculations
+        theta = atan2(y,x);
+        r = sqrt(x.^2 + y.^2);
+
+        syms_theta = bezier_fit_unsmoothed_to_syms(time_normal, theta);
+        syms_r = bezier_fit_unsmoothed_to_syms(time_normal, r);
+
+        % Note that theta dot is the yaw rate
+        syms_theta_dot = bezier_derivative_syms(syms_theta, time_range);
+        syms_theta_dot_dot = bezier_derivative_syms(syms_theta_dot, time_range);
+
+        func_theta_polar = matlabFunction(syms_theta);
+       func_theta_dot_polar = matlabFunction(syms_theta_dot);
+       func_theta_dot_dot_polar = matlabFunction(syms_theta_dot_dot);
+       
+       theta_polar = func_theta_polar(time_normal);
+       theta_dot_polar = func_theta_dot_polar(time_normal);
+       theta_dot_dot_polar = func_theta_dot_dot_polar(time_normal);
+
+        % Can get x and y from fitted r and theta
+        syms_x_polar = syms_r * cos(syms_theta);
+        syms_y_polar = syms_r * sin(syms_theta);
+
+                        func_x_polar = matlabFunction(syms_x_polar);
+       func_y_polar = matlabFunction(syms_y_polar);
+
+        x_polar = func_x_polar(time_normal);
+        y_polar = func_y_polar(time_normal);
+
+        
+
+       syms_xdot_polar = bezier_derivative_syms(syms_x_polar,time_range);
+       syms_ydot_polar = bezier_derivative_syms(syms_y_polar,time_range);
+
+       func_xdot_polar = matlabFunction(syms_xdot_polar);
+       xdot_polar = func_xdot_polar(time_normal);
+
+       [syms_u_polar, syms_v_polar, ~] = bezier_rotate_syms(syms_xdot_polar, syms_ydot_polar, syms_h, syms_theta);
+       func_u_polar = matlabFunction(syms_u_polar);
+       func_v_polar = matlabFunction(syms_v_polar);
+
+        u_polar = func_u_polar(time_normal);
+       v_polar = func_v_polar(time_normal);
+
        syms_delta_cmd = bezier_fit_unsmoothed_to_syms(time_normal, delta_cmd);
        
        % Calculate the derivatives
@@ -57,6 +105,13 @@ function [x, y, h, u, v, r, udot, vdot, rdot, delta_cmd, xdot, ydot] = bezier_fi
        
        xdot = func_xdot(time_normal);
        ydot = func_ydot(time_normal);
+       hold on
+       plot(time, u)
+       plot(time, u_polar)
+       legend('original', 'bezier','polar')
+       hold off
+       end
+       
 
         % h, r, and rdot almost linear
         % h = h;

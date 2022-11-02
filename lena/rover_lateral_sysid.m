@@ -99,8 +99,8 @@ classdef rover_lateral_sysid < handle
                 % Remove undesirable sections of the trajectory
                 minimum_u = 0.1;
 %                 structs_to_sync = remove_negative_u(structs_to_sync.vehicle_states_from_mocap, structs_to_sync, minimum_u);
-                condition_encoder = structs_to_sync.wheel_encoder.encoder_velocity > minimum_u;
-                structs_to_sync = remove_via_condition(structs_to_sync.wheel_encoder, structs_to_sync, condition_encoder);
+% % %                 condition_encoder = structs_to_sync.wheel_encoder.encoder_velocity > minimum_u;
+% % %                 structs_to_sync = remove_via_condition(structs_to_sync.wheel_encoder, structs_to_sync, condition_encoder);
 
                 %% Interpolate so that the time vectors match
                 reference_struct = structs_to_sync.vehicle_states_from_mocap;
@@ -111,11 +111,25 @@ classdef rover_lateral_sysid < handle
                 % roughly constant)
                 % for mocap_lateral_10_09_3.bag
                 % keeping [50,150], [190,205], [235,325], [345,370]
-%                 structs_to_sync = remove_or_select_time_interval([0, 50], structs_to_sync, 0);
-%                 structs_to_sync = remove_or_select_time_interval([150, 190], structs_to_sync, 0);
-%                 structs_to_sync = remove_or_select_time_interval([205, 235], structs_to_sync, 0);
-%                 structs_to_sync = remove_or_select_time_interval([325, 345], structs_to_sync, 0);
-%                 structs_to_sync = remove_or_select_time_interval([370, 1000], structs_to_sync, 0);
+% % % % %                 structs_to_sync = remove_or_select_time_interval([154, 182], structs_to_sync, 0);
+%                 structs_to_sync = remove_or_select_time_interval([14, 15], structs_to_sync, 0);
+%                 structs_to_sync = remove_or_select_time_interval([20.5, 21], structs_to_sync, 0);
+%                 structs_to_sync = remove_or_select_time_interval([25, 25.1], structs_to_sync, 0);
+%                 structs_to_sync = remove_or_select_time_interval([25.9, 26], structs_to_sync, 0);
+%                 structs_to_sync = remove_or_select_time_interval([27, 27.2], structs_to_sync, 0);
+% 
+%                  structs_to_sync = remove_or_select_time_interval([31.2, 32], structs_to_sync, 0);
+%                   structs_to_sync = remove_or_select_time_interval([33, 32.2], structs_to_sync, 0);
+%                    structs_to_sync = remove_or_select_time_interval([40, 42.1], structs_to_sync, 0);
+%                     structs_to_sync = remove_or_select_time_interval([42.9, 43], structs_to_sync, 0);
+%                      structs_to_sync = remove_or_select_time_interval([46, 46.3], structs_to_sync, 0);
+%                       structs_to_sync = remove_or_select_time_interval([56.8, 57.2], structs_to_sync, 0);
+%                        structs_to_sync = remove_or_select_time_interval([58, 58.25], structs_to_sync, 0);
+%                         structs_to_sync = remove_or_select_time_interval([59, 59.1], structs_to_sync, 0);
+%                          structs_to_sync = remove_or_select_time_interval([61.8, 62.2], structs_to_sync, 0);
+%                           structs_to_sync = remove_or_select_time_interval([69.8, 70.2], structs_to_sync, 0);
+%                            structs_to_sync = remove_or_select_time_interval([72, 72.3], structs_to_sync, 0);
+%                             structs_to_sync = remove_or_select_time_interval([75, 75.2], structs_to_sync, 0);
 
                 %% Store data
                 % Save the results into the class's filtered_states vector
@@ -128,25 +142,31 @@ classdef rover_lateral_sysid < handle
                 min_time_interval_length = 0.1;        % [s]
                 expected_num_traj = 50;              % [s]
                 dt = 0.02;                           % [s], sampling rate
-                [time_start, time_end] = divide_into_time_intervals(reference_struct, min_time_between_intervals, min_time_interval_length, expected_num_traj, dt);
+%                 [time_start, time_end] = divide_into_time_intervals(reference_struct, min_time_between_intervals, min_time_interval_length, expected_num_traj, dt);
 %                 [time_start, time_end] = split_traj_from_h(reference_struct, expected_num_traj, min_time_interval_length, dt);
 
-                time_start_ = [];
-                time_end_ = [];
+                time_start = [reference_struct.time(1)];
+                time_end = [reference_struct.time(end)];
 
-                for i=1:length(time_start)
-                    if time_end(i) - time_start(i) > 0.5
-                        endpoints = time_start(i):0.5:time_end(i);
-                        for j=1:length(endpoints)-1
-                            time_start_=[time_start_, endpoints(j)];
-                            time_end_=[time_end_, endpoints(j+1)];
-                        end
-                    else
-                        time_start_ = [time_start_, time_start(i)];
-                        time_end_ = [time_end_, time_end(i)];
-                    end
+                length_of_traj = 1;
+                time_start_ = [time_start:length_of_traj:time_end - length_of_traj];
+                time_end_ = [time_start+length_of_traj:length_of_traj:time_end];
 
-                end
+                 %0.75
+
+%                 for i=1:length(time_start)
+%                     if time_end(i) - time_start(i) > length_of_traj
+%                         endpoints = time_start(i):length_of_traj:time_end(i);
+%                         for j=1:length(endpoints)-1
+%                             time_start_=[time_start_, endpoints(j)];
+%                             time_end_=[time_end_, endpoints(j+1)];
+%                         end
+%                     else
+%                         time_start_ = [time_start_, time_start(i)];
+%                         time_end_ = [time_end_, time_end(i)];
+%                     end
+% 
+%                 end
 
                 for i=1:length(time_start_)
                     % Split the data
@@ -161,18 +181,18 @@ classdef rover_lateral_sysid < handle
                 %% Fit Bezier Curve 
                 fit_trajectories(obj);
                 
-                for i1=1:length(obj.fitted_trajectories)
-                    field_names1 = fieldnames(obj.fitted_trajectories(i1));
-                    for j = 1:length(field_names1)
-                        obj.fitted_trajectories(i1).(field_names1{j}) = obj.fitted_trajectories(i1).(field_names1{j})(6:end-6);
-                    end
-                end
+%                 for i1=1:length(obj.fitted_trajectories)
+%                     field_names1 = fieldnames(obj.fitted_trajectories(i1));
+%                     for j = 1:length(field_names1)
+%                         obj.fitted_trajectories(i1).(field_names1{j}) = obj.fitted_trajectories(i1).(field_names1{j})(7:end-7);
+%                     end
+%                 end
 
                 compile_fitted_trajectories(obj);
 
-                obj.fitted_states = limit_values(obj, "udot", obj.fitted_states, 10);
-                obj.fitted_states = limit_values(obj, "vdot", obj.fitted_states, 10);
-                obj.fitted_states = limit_values(obj, "rdot", obj.fitted_states, 10);
+%                 obj.fitted_states = limit_values(obj, "udot", obj.fitted_states, 10);
+%                 obj.fitted_states = limit_values(obj, "vdot", obj.fitted_states, 10);
+%                 obj.fitted_states = limit_values(obj, "rdot", obj.fitted_states, 10);
 
                 %% Plotting
                 [fLinearCoef, rLinearCoef, alphaf, alphar, F_yf, F_yr] ...
@@ -266,7 +286,7 @@ classdef rover_lateral_sysid < handle
 
                     
                     [x_, y_, z_] = quat2angle(q);
-%                     h(i) = x_;
+                    h(i) = y_;
 
 % We can assume that the quaternion points vertically
 % atan2 (2.0* (qy*qz + qw*qx), qw*qw - qx*qx - qy*qy + qz*qz)
@@ -308,13 +328,16 @@ classdef rover_lateral_sysid < handle
                xdot_vec=[];
                ydot_vec=[];
                 for i=1:length(obj.trajectories)
+                   
                     current_trajectory = obj.trajectories(i);
                     [time, x, y, h, delta_cmd] = load_position_states(current_trajectory);
+                     if ~isempty(time)
                     [x, y, h, u, v, r, udot, vdot, rdot, delta_cmd, xdot, ydot] = bezier_fit_to_data(time, x, y, h, delta_cmd);
                     obj.fitted_trajectory = compile_state_vector(time, x, y, h, u, v, r, udot, vdot, rdot, delta_cmd, obj.fitted_trajectory);
                     obj.fitted_trajectories = [obj.fitted_trajectories, obj.fitted_trajectory];
                     xdot_vec = [xdot_vec; xdot];
                     ydot_vec = [ydot_vec; ydot];
+                     end
                 end
            end
 

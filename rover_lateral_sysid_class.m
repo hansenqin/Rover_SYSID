@@ -78,11 +78,17 @@ classdef rover_lateral_sysid_class < handle
                 % Seperate Trajectories
                 get_trajectories_from_tracking_data(obj);
 
+                %%%%%
+                % split further
+                
+                
+                %%%%%
+
                 % Fit Bezier Curve 
                 fit_bezier_to_trajectories(obj);
 
                 % Filter Udot values that don't look good
-                filter_u_based_on_udot(obj);
+%                 filter_u_based_on_udot(obj);
 
                 % Combine all trajectories in one struct
                 combine_all_trajectories(obj);
@@ -194,7 +200,7 @@ classdef rover_lateral_sysid_class < handle
 
                     q = [mocap(i).Pose.Orientation.W, mocap(i).Pose.Orientation.X, mocap(i).Pose.Orientation.Y, mocap(i).Pose.Orientation.Z];
                     [z_, y_, x_] = quat2angle(q);
-                    h = [h; z_];           
+                    h = [h; y_];           
                 end
 
                 obj.vehicle_states_from_mocap.time = time;
@@ -370,14 +376,14 @@ classdef rover_lateral_sysid_class < handle
 
                    %% Needs to be corrected use the above two eqautions and take derivative wrt time (Missing the last dtheta_global term)
 
-                   ax_global = d2r_global*cos(fitted_theta)...
-                       -2*dr_global*dtheta_global*sin(fitted_theta)...
-                       -fitted_r*dtheta_global*dtheta_global*cos(fitted_theta)...
-                       -fitted_r*d2theta_global*sin(fitted_theta);
-                   ay_global = d2r_global*sin(fitted_theta)...
-                       +2*dr_global*dtheta_global*cos(fitted_theta)...
-                       -fitted_r*dtheta_global*dtheta_global*sin(fitted_theta)...
-                       +fitted_r.*d2theta_global*cos(fitted_theta);
+                   ax_global = d2r_global.*cos(fitted_theta)...
+                       -2.*dr_global.*dtheta_global.*sin(fitted_theta)...
+                       -fitted_r.*dtheta_global.*dtheta_global.*cos(fitted_theta)...
+                       -fitted_r.*d2theta_global.*sin(fitted_theta);
+                   ay_global = d2r_global.*sin(fitted_theta)...
+                       +2.*dr_global.*dtheta_global.*cos(fitted_theta)...
+                       -fitted_r.*dtheta_global.*dtheta_global.*sin(fitted_theta)...
+                       +fitted_r.*d2theta_global.*cos(fitted_theta);
 
                    [fitted_y_over_x, f_x, slope_of_f_x, d2_f_x] =  fit_bezier_curve(obj, fitted_x, fitted_y);             
 
@@ -432,6 +438,13 @@ classdef rover_lateral_sysid_class < handle
                    obj.trajectories(i).encoder_position = fitted_encoder_position;
                    obj.trajectories(i).encoder_velocity = -encoder_velocity*2*pi/(4096);
                    %                    obj.trajectories(i).num_diff_encoder_velocity = num_diff_encoder_velocity;
+
+
+                   obj.trajectories(i).x = fitted_x;
+                   obj.trajectories(i).y = fitted_y;
+                   obj.trajectories(i).h = fitted_theta;
+
+
                end
            end
            function [fitted_y, f_of_x, first_derivative, second_derivative] =   fit_bezier_curve(obj, x, y)
@@ -483,7 +496,9 @@ classdef rover_lateral_sysid_class < handle
                    %                 filter = condition_1 | condition_2;
                    field_names = fieldnames(obj.trajectories(i));
                    for j = 1:length(field_names)
-                       obj.trajectories(i).(field_names{j}) = obj.trajectories(i).(field_names{j})(filter);
+                       if ~isempty(obj.trajectories(i).(field_names{j}))
+                           obj.trajectories(i).(field_names{j}) = obj.trajectories(i).(field_names{j})(filter);
+                       end
                    end
                end
            end
@@ -579,6 +594,59 @@ classdef rover_lateral_sysid_class < handle
                xLinearCoef = fmincon(f,x0);
 
            end
+
+
+           function [fLinearCoef, rLinearCoef, alphaf, alphar, F_yf, F_yr] = get_lateral_tire_curve_coefficients(obj)
+
+
+
+                              %% Loading data
+               time = obj.trajectory.time;
+               x = obj.trajectory.x;
+               y = obj.trajectory.y;
+               h = obj.trajectory.h;
+               u = obj.trajectory.u;
+               v = obj.trajectory.v;
+               r = obj.trajectory.r;
+               udot = obj.trajectory.udot;
+               vdot = obj.trajectory.vdot;
+               rdot = obj.trajectory.rdot;
+               w = obj.trajectory.encoder_velocity;
+               delta_cmd = obj.trajectory.delta_cmd;
+
+
+
+    % Find slip angles
+    alphaf = delta_cmd - (v + obj.lf.*r)./sqrt(u.^2+0.05);
+    alphar = -(v-obj.lr.*r)./sqrt(u.^2+0.05);
+
+    % Find lateral force
+    F_yf = (obj.lr.*obj.m.*(vdot+u.*r)+rdot.*obj.Izz)./(obj.lf + obj.lr);
+    F_yr=(obj.m.*(vdot+u.*r)-rdot*obj.Izz./obj.lf)./(1+obj.lr./obj.lf);
+
+%     alphaf = smoothdata(alphaf);
+%     alphar = smoothdata(alphar);
+%     F_yf = smoothdata(F_yf);
+%     F_yr = smoothdata(F_yr);
+    
+
+    % Select and fit a curve to the data in the linear region 
+    alphafSelected = alphaf(abs(alphaf)<0.2);
+    alpharSelected = alphar(abs(alphar)<0.2);
+    F_yfSelected = F_yf(abs(alphaf)<0.2);
+    F_yrSelected = F_yr(abs(alphar)<0.2);
+
+    % Lateral linear curve through (0,0) using fmincon
+    x0 = 1;
+    f = @(x) norm(alphafSelected*x-F_yfSelected);
+    fLinearCoef = fmincon(f,x0);
+    f = @(x) norm(alpharSelected*x-F_yrSelected);
+    rLinearCoef = fmincon(f,x0);
+
+
+           end
+
+
            
            %% PLOTTING
            function plot_tracking_data(obj)
@@ -638,7 +706,7 @@ classdef rover_lateral_sysid_class < handle
                    clf;
                    xlabel("Rear Slip Angle");
                    ylabel("Rear Lateral Tire Force (N)");
-                   title("Fywr="+round(rLinearCoef(1),2)+"*alpha_r");
+                   title("Fywr="+round(yLinearCoef(1),2)+"*alpha_r");
                end
                % Plot the data and the fitted curve
                scatter(alpha, F_y);
@@ -649,9 +717,9 @@ classdef rover_lateral_sysid_class < handle
                xlim([-0.3,0.3]);
                hold off;
            end
-           function plot_linear_tire_curve(obj, xLinearCoef, fLinearCoef, rLinearCoef, lambda, alphaf, alphar, F_x, F_yf, F_yr)
+           function plot_linear_tire_curve(obj, fLinearCoef, rLinearCoef, alphaf, alphar, F_yf, F_yr)
                % Plots the linear longitudinal and lateral curves
-               plot_longitudnal_linear_tire_curve(obj, xLinearCoef, lambda, F_x);
+%                plot_longitudnal_linear_tire_curve(obj, xLinearCoef, lambda, F_x);
                plot_lateral_linear_tire_curve(obj, fLinearCoef, alphaf, F_yf, 1);
                plot_lateral_linear_tire_curve(obj, rLinearCoef, alphar, F_yr, 0);
            end
